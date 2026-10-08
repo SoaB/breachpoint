@@ -1,0 +1,16 @@
+# 編譯產出
+objs/
+*.exe
+
+# IDE / 系統
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# 依賴 DLL（raylib 等動態庫）
+*.dll
+*.a
+*.lib
