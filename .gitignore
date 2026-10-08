@@ -1,6 +1,7 @@
 # 編譯產出
 objs/
 *.exe
+*.o
 
 # IDE / 系統
 .vscode/
