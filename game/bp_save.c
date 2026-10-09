@@ -1,22 +1,20 @@
 /******************************************************************************************
- * bp_save.c -- persistence implementation.
+ * bp_save.c -- 儲存系統（persistence）的實作。
  *
- * See bp_save.h for the format and durability contract. Implementation notes:
+ * 檔案格式與耐用性（durability）契約見 bp_save.h，這裡只記錄實作上的取捨：
  *
- *   - Atomic write is done with plain stdio (fopen/fclose) plus remove()+rename(), not
- *     raylib's SaveFileText(). SaveFileText writes straight to the destination, so a crash
- *     or a full disk mid-write leaves a truncated file that the next boot would happily
- *     parse as a legitimate (but empty) profile. rename() is atomic on POSIX and on
- *     Emscripten's MEMFS, so the destination is either the old file or the new one, never
- *     a mixture.
+ *   - 原子寫入（atomic write）用的是純 stdio（fopen/fclose）加上 remove()+rename()，而不是
+ *     raylib 的 SaveFileText()。SaveFileText 是直接寫進目標檔案的，因此中途當機或磁碟寫滿
+ *     都會留下被截斷的檔案，而下次開機的載入器會把它當成一份「合法（但空白）」的設定檔。
+ *     rename() 在 POSIX 與 Emscripten 的 MEMFS 上都是原子的，所以目的地永遠是舊檔或新檔，
+ *     絕不會是兩者的混合體。
  *
- *   - The serialiser writes into one file-static buffer and a single fwrite. Two reasons:
- *     a save must not be interleaved with anything else touching the file, and one write
- *     means one syscall, which on IDBFS is the difference between a fast save and a stall.
+ *   - 序列化一次寫進單一的檔案靜態緩衝區，並且只做一次 fwrite。理由有二：存檔不能與其他
+ *     存取同一檔案的動作交錯；而一次寫入就是一次系統呼叫（syscall），在 IDBFS 上這正是
+ *     「快速存檔」與「明顯卡頓」的差別。
  *
- *   - Records are stored per (level, difficulty). Merging difficulties into one row would
- *     make "best time" meaningless, because a RECRUIT run and a BREACH run are not the same
- *     achievement.
+ *   - 紀錄以 (level, difficulty) 為單位存放。把難度合併成單一列會讓「最佳時間」失去意義，
+ *     因為 RECRUIT 難度的一局與 BREACH 難度的一局並不是同一個成就。
  ******************************************************************************************/
 #include "bp_save.h"
 
@@ -44,21 +42,21 @@ bp_save g_save = { 0 };
 static char s_buf[SAVE_BUF_SIZE];
 
 /* -------------------------------------------------------------------------------------- */
-/* paths                                                                                   */
+/* 路徑                                                                                      */
 /* -------------------------------------------------------------------------------------- */
 static void resolve_paths(void)
 {
 #ifdef PLATFORM_WEB
     /*
-     * On the web we write into Emscripten's virtual FS and then sync it to IndexedDB.
-     * The mount is created once, here, and failures are tolerated: if IDBFS is unavailable
-     * (private mode, storage blocked) saves still work for the session and simply do not
-     * survive a reload, which is strictly better than refusing to boot.
+     * 在 Web 上我們寫進 Emscripten 的虛擬檔案系統（virtual FS），再把它同步到 IndexedDB。
+     * 掛載點只在這裡建立一次，而且失敗是可容忍的：若 IDBFS 無法使用（私密模式、儲存空間被
+     * 封鎖），存檔在本次連線期間照樣能用，只是重新整理頁面後不會保留 —— 這總比直接拒絕開機
+     * 來得好。
      */
     EM_ASM({
         try {
             FS.mkdir('/bpdata');
-        } catch (e) { /* already exists */ }
+        } catch (e) { /* 已存在，忽略即可 */ }
         try {
             FS.mount(IDBFS, {}, '/bpdata');
             FS.syncfs(true, function (err) {
@@ -75,9 +73,9 @@ static void resolve_paths(void)
     if (!home || !home[0]) home = GetApplicationDirectory();
 
     const char *xdg = getenv("XDG_DATA_HOME");
-    /* dir is deliberately shorter than the destination buffers it feeds, so gcc can prove
-     * the "/settings.cfg" suffix always fits. A 256-byte dir into a 256-byte path cannot be
-     * proven safe and would warn (correctly) about truncation. */
+    /* dir 刻意比它所餵入的目標緩衝區還要短，好讓 gcc 能證明 "/settings.cfg" 這段後綴一定
+     * 放得進去。把 256 位元組的 dir 塞進 256 位元組的 path 無法被證明是安全的，編譯器便會
+     * （正確地）針對可能的截斷發出警告。 */
     char dir[200];
     if (xdg && xdg[0]) snprintf(dir, sizeof(dir), "%s/BreachPoint", xdg);
     else               snprintf(dir, sizeof(dir), "%s/.local/share/BreachPoint", home);
@@ -93,8 +91,8 @@ static void resolve_paths(void)
 void bp_save_sync_platform(void)
 {
 #ifdef PLATFORM_WEB
-    /* Push the virtual FS out to IndexedDB. Without this the browser discards everything
-     * when the tab closes -- the single most common web-save bug. */
+    /* 把虛擬檔案系統推送（sync）到 IndexedDB。少了這一步，瀏覽器會在分頁關閉時丟棄一切
+     * —— 這正是 Web 存檔最常見的 bug。 */
     EM_ASM({
         FS.syncfs(false, function (err) {
             if (err) console.warn('[bp_save] syncfs failed:', err);
@@ -118,7 +116,7 @@ const char *bp_save_result_name(bp_save_result r)
 }
 
 /* -------------------------------------------------------------------------------------- */
-/* defaults                                                                                */
+/* 預設值                                                                                    */
 /* -------------------------------------------------------------------------------------- */
 void bp_save_defaults(void)
 {
@@ -126,7 +124,7 @@ void bp_save_defaults(void)
     memset(s, 0, sizeof(*s));
 
     s->quality = BP_QUALITY_HIGH;
-    s->resolution_scale = 0.0f;      /* 0 = follow the quality preset */
+    s->resolution_scale = 0.0f;      /* 0 = 交給品質預設值決定 */
     s->fov = 95;
     s->vsync = true;
     s->crt_filter = false;
@@ -150,9 +148,9 @@ void bp_save_defaults(void)
 
     snprintf(s->profile_name, sizeof(s->profile_name), "PLAYER");
 
-    /* Bindings come from the input module's own default table, so there is exactly one
-     * source of truth for the default keymap. We snapshot it into the profile so that a
-     * rebind persists and a "reset to defaults" is possible without restarting. */
+    /* 綁定取自輸入模組自己的預設對照表，如此預設鍵位（keymap）就只有一份單一真相來源
+     * （source of truth）。這裡把它快照進設定檔，改鍵才能在重啟之後依然存在，「恢復預設
+     * 值」也才可能不必重開遊戲就完成。 */
     bp_input_reset_binds();
     for (int a = 0; a < ACT_COUNT; a++)
     {
@@ -165,7 +163,7 @@ void bp_save_defaults(void)
 }
 
 /* -------------------------------------------------------------------------------------- */
-/* apply                                                                                   */
+/* 套用                                                                                      */
 /* -------------------------------------------------------------------------------------- */
 void bp_save_apply_settings(void)
 {
@@ -178,11 +176,10 @@ void bp_save_apply_settings(void)
 
     bp_camera_set_fov_base((float)BP_CLAMP(s->fov, 70, 120));
 
-    /* raylib reads FLAG_VSYNC_HINT only at window creation, so changing vsync needs a
-     * restart. What we can change live is whether EndDrawing() blocks on the event queue --
-     * that decision is centralised in bp_apply_event_wait(), which refuses while boot is
-     * still running (bp_save_init is itself a boot stage, so blocking here would stop every
-     * later stage from running). See bp_engine::event_wait_allowed. */
+    /* raylib 只在視窗建立時讀取 FLAG_VSYNC_HINT，因此切換 vsync 必須重開才會生效。真正能
+     * 即時改變的是 EndDrawing() 要不要在事件佇列上阻塞（block）—— 這個決定集中在
+     * bp_apply_event_wait()，而它在開機尚未完成時一律拒絕阻塞（bp_save_init 本身就是一個
+     * 開機階段，若在這裡阻塞，後面所有階段都不會被執行）。詳見 bp_engine::event_wait_allowed。 */
     g_engine.vsync = s->vsync;
     bp_apply_event_wait();
 
@@ -191,9 +188,8 @@ void bp_save_apply_settings(void)
     g_input.sensitivity = BP_CLAMP(s->sensitivity, 0.02f, 1.0f);
     g_input.invert_y = s->invert_y;
 
-    /* Re-apply the stored keymap on top of the defaults. Any action whose stored codes are
-     * all zero keeps its default binding, which is how a save from an older version that
-     * predates a new action still produces a playable control scheme. */
+    /* 在預設值之上重新套用已儲存的鍵位。任何一個儲存代碼全為零的動作會保留預設綁定 ——
+     * 這正是「由早於某個新動作的舊版本所寫下的存檔」仍能產生一套可玩操控方案的原因。 */
     bp_input_reset_binds();
     for (int a = 0; a < ACT_COUNT; a++)
     {
@@ -218,7 +214,7 @@ void bp_save_apply_settings(void)
 }
 
 /* -------------------------------------------------------------------------------------- */
-/* loading                                                                                 */
+/* 載入                                                                                      */
 /* -------------------------------------------------------------------------------------- */
 static void load_settings_file(bp_config *cfg)
 {
@@ -265,8 +261,8 @@ static void load_settings_file(bp_config *cfg)
             if (action >= 0 && action < ACT_COUNT && slot >= 0 && slot < 2)
                 s->pad_binds[action][slot] = bp_cfg_int(cfg, s->pad_binds[action][slot]);
         }
-        /* Unknown keys are ignored silently on purpose: a save written by a newer build
-         * must still load in an older one, minus the fields the older build lacks. */
+        /* 刻意靜默忽略未知道具：由較新版本寫出的存檔，仍然必須能被舊版本載入，只是會少掉
+         * 舊版本並不認識的那些欄位。 */
     }
 }
 
@@ -292,7 +288,7 @@ static void load_progress_file(bp_config *cfg)
 
         if (strcmp(bp_config_section_type(cfg), "level")) continue;
 
-        /* section id is "<levelIndex>-<difficulty>", e.g. "2-3" */
+            /* 區段 id 的格式是 "<levelIndex>-<difficulty>"，例如 "2-3" */
         int lvl = atoi(bp_config_section_id(cfg));
         const char *dash = strchr(bp_config_section_id(cfg), '-');
         int diff = dash ? atoi(dash + 1) : 1;
@@ -328,8 +324,8 @@ bp_save_result bp_save_load(void)
         load_settings_file(&cfg);
         if (g_save.version > SAVE_VERSION)
         {
-            /* Newer file than this build understands. Keep the file on disk untouched and
-             * run on defaults: overwriting it would destroy data a newer build can read. */
+            /* 檔案比本版本所能理解的還要新。磁碟上的檔案保持原樣、改用預設值執行：覆寫它
+             * 等於摧毀較新版本讀得懂、而本版本讀不懂的資料。 */
             BP_LOGW("save: settings.cfg is version %d, this build understands %d -- using defaults",
                     g_save.version, SAVE_VERSION);
             result = SAVE_NEW_VERSION;
@@ -362,11 +358,11 @@ bp_save_result bp_save_load(void)
 }
 
 /* -------------------------------------------------------------------------------------- */
-/* writing                                                                                 */
+/* 寫入                                                                                      */
 /* -------------------------------------------------------------------------------------- */
 /*
- * Serialise into s_buf, then write "<path>.tmp" and rename over "<path>".
- * Returns true on success. `len` receives the byte count for logging.
+ * 先序列化進 s_buf，再寫入 "<path>.tmp"，最後以 rename 蓋掉 "<path>"。
+ * 成功回傳 true；`len` 用來接收這次寫入的位元組數，供記錄（log）輸出。
  */
 static bool atomic_write(const char *path, const char *data, int len)
 {
@@ -388,10 +384,10 @@ static bool atomic_write(const char *path, const char *data, int len)
         return false;
     }
 
-    /* remove() first: rename() over an existing file is atomic on POSIX, but on some
-     * Windows/Emscripten combinations it fails if the destination exists. Removing first
-     * costs a window where neither file exists, which is acceptable because the loader
-     * treats "missing" as "use defaults" rather than as a fatal error. */
+    /* 先 remove() 再 rename()：在 POSIX 上，覆寫既有檔案的 rename() 是原子的；但在某些
+     * Windows/Emscripten 組合下，只要目的地已存在它就會失敗。先刪除會製造出一段「兩份檔案
+     * 都不存在」的空窗，這是可接受的，因為載入器把「檔案不存在」視為「改用預設值」，而不
+     * 是致命錯誤。 */
     remove(path);
     if (rename(tmp, path) != 0)
     {
@@ -497,8 +493,7 @@ bp_save_result bp_save_write_progress(void)
         for (int d = 0; d < 4; d++)
         {
             const bp_level_record *r = &g_save.levels[lvl][d];
-            /* Skip untouched rows: a progress file for a player who tried one level should
-             * not be 64 empty blocks long. */
+            /* 跳過完全沒碰過的列：只嘗試過一關的玩家，其進度檔不該長達 64 個空白區塊。 */
             if (r->attempts <= 0 && !r->completed) continue;
 
             n += snprintf(s_buf + n, SAVE_BUF_SIZE - (size_t)n,
@@ -529,7 +524,7 @@ bp_save_result bp_save_write_progress(void)
 }
 
 /* -------------------------------------------------------------------------------------- */
-/* records                                                                                 */
+/* 紀錄                                                                                      */
 /* -------------------------------------------------------------------------------------- */
 bp_level_record *bp_save_record(int level, int difficulty)
 {
@@ -549,16 +544,15 @@ void bp_save_submit_run(int level, int difficulty, bool completed, int score,
     if (completed) r->completed = true;
     if (secret) r->secret_found = true;
 
-    /* Bests only improve. A "best" that can go down is not a record, it is a last value, and
-     * players read the difference immediately. */
+    /* 「最佳」只會變好。一個會往下跌的「最佳」不是紀錄，那只是「最近一次的值」，而玩家
+     * 立刻就能分辨這兩者的差別。 */
     if (score > r->best_score) r->best_score = score;
     if (kills > r->best_kills) r->best_kills = kills;
     if (wave > r->best_wave) r->best_wave = wave;
     if (accuracy > r->best_accuracy) r->best_accuracy = BP_CLAMP(accuracy, 0.0f, 1.0f);
     if (perfectWaves > r->perfect_waves) r->perfect_waves = perfectWaves;
 
-    /* Time is "best" = fastest, and only counts for a completed run: a 40-second death is
-     * not a record. */
+    /* 時間的「最佳」＝最快，而且只在完整通關時才算數：40 秒就陣亡並不算一項紀錄。 */
     if (completed && time > 0.0f && (r->best_time <= 0.0f || time < r->best_time)) r->best_time = time;
 
     g_save.total_runs++;
@@ -571,8 +565,8 @@ void bp_save_submit_run(int level, int difficulty, bool completed, int score,
     g_save.settings.last_level = level;
     g_save.dirty = true;
 
-    /* Persist immediately. A run result is exactly the thing a player would be furious to
-     * lose, and the write is a few kilobytes -- cheap enough to do synchronously here. */
+    /* 立刻寫入磁碟。一局的結果正是玩家最痛恨弄丟的東西，而且這次寫入只有幾 KB —— 在這裡
+     * 同步完成綽綽有餘。 */
     bp_save_write_progress();
     bp_save_write_settings();
     bp_save_sync_platform();
@@ -583,9 +577,9 @@ void bp_save_submit_run(int level, int difficulty, bool completed, int score,
 }
 
 /*
- * Level 0 is always open. Level N unlocks when level N-1 has been completed on *any*
- * difficulty -- otherwise a player who struggles on VETERAN is locked out of content they
- * would enjoy on RECRUIT, which is the wrong incentive for a game with no multiplayer.
+ * 第 0 關永遠開放。第 N 關在第 N-1 關以「任意」難度通過時解鎖 —— 否則在 VETERAN 上掙扎
+ * 的玩家，會被擋在他們本可於 RECRUIT 享受的內容之外；對一款沒有多人連線的遊戲來說，這
+ * 是錯誤的誘因設計。
  */
 bool bp_save_level_unlocked(int level)
 {
@@ -606,7 +600,7 @@ int bp_save_completion_percent(void)
 }
 
 /* -------------------------------------------------------------------------------------- */
-/* init                                                                                    */
+/* 初始化                                                                                    */
 /* -------------------------------------------------------------------------------------- */
 void bp_save_boot(void)
 {
@@ -614,18 +608,17 @@ void bp_save_boot(void)
     resolve_paths();
     bp_save_result r = bp_save_load();
 
-    /* A first run writes the default profile immediately, so the player has a file to edit
-     * and so a read-only filesystem is detected at boot rather than at the first time they
-     * change an option and it silently fails to stick. */
+    /* 第一次執行會立刻寫出預設設定檔：玩家手上因此有一份可自行編輯的檔案，而唯讀檔案系統
+     * 的問題也會在開機時就被發現，而不是等到玩家第一次改選項、發現設定悄悄沒存下來才暴露。 */
     if (r == SAVE_MISSING) bp_save_write_settings();
 
-    /* NOTE: settings are NOT applied here. bp_save_apply_settings() touches the renderer,
-     * the audio device and the camera, none of which exist before their boot stages run. */
+    /* 注意：設定並不是在這裡套用的。bp_save_apply_settings() 會動到繪圖、音訊裝置與相機，
+     * 而這些東西在各自的開機階段跑完之前根本還不存在。 */
 }
 
 void bp_save_init(void)
 {
-    /* Called from the boot sequence after gfx/audio/input/camera are up. */
+    /* 由開機流程呼叫，此時 gfx／audio／input／camera 都已就緒。 */
     bp_save_apply_settings();
     BP_LOGI("save: settings applied (quality %s, fov %d, sens %.2f, difficulty %s)",
             bp_gfx_quality_name(g_gfx.quality), g_save.settings.fov,

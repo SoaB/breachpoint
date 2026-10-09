@@ -1,5 +1,19 @@
 /******************************************************************************************
- * bp_enemies.c
+ * bp_enemies.c -- 敵人定義、池位管理、AI 感知／導航／攻擊，以及程序化骨骼繪製。
+ *
+ * 為什麼是程序化模型
+ *   四種原型的身體都由零件（腿、軀幹、手臂、頭）在執行期組裝，而不是載入美術資產。這讓
+ *   動作能直接由模擬狀態驅動 —— 步態相位跟著地面速度走、攻擊前搖對應 attack_wind、死亡
+ *   傾倒對應 die_timer —— 也因此換皮只需要改顏色與 scale，不必重做動畫。
+ *
+ * 為什麼敵人用 handle（世代索引）而不是裸指標
+ *   敵人會在池中頻繁生滅，任何持有者都可能握著一個已被回收的位置。handle 帶著世代
+ *   （generation），過期的 handle 會解析成 NULL，而不是悄悄改到另一個新敵人身上。
+ *
+ * AI 的取捨
+ *   感知、導航與攻擊都是刻意的近似：視野錐 + 射線可視性、三根鬚毛（whisker）的避障、以
+ *   分離向量避免擠成一團。沒有尋路（pathfinding），因為競技場的可走區域本來就大而連通；
+ *   換來的是每一隻敵人的成本低到可以同屏塞二十隻。
  ******************************************************************************************/
 #include "bp_enemies.h"
 #include "bp_world.h"
@@ -16,7 +30,7 @@
 bp_enemy_sys g_enemies = { 0 };
 
 /* ====================================================================================== */
-/* 1. compiled-in defaults (fallback if assets/cfg/enemies.cfg is missing)                  */
+/* 1. 編譯期預設值（assets/cfg/enemies.cfg 缺失時的回退值）                                  */
 /* ====================================================================================== */
 static bp_enemy_def s_defaults[ET_COUNT] = {
     {
@@ -126,7 +140,7 @@ bool bp_enemies_load_config(const char *path)
 }
 
 /* ====================================================================================== */
-/* 2. lifecycle                                                                            */
+/* 2. 生命週期                                                                               */
 /* ====================================================================================== */
 void bp_enemies_init(void)
 {
@@ -191,17 +205,15 @@ bp_handle bp_enemy_spawn(bp_enemy_type type, Vector3 pos, float yaw, bool dorman
     e->state = dormant ? ES_DORMANT : ES_IDLE;
     e->pos = pos;
     e->yaw = yaw;
-    /* Difficulty is applied at spawn, once, rather than at every damage event. Two reasons:
-     * the health bar the AI reasons about ("am I below my pain threshold") stays consistent
-     * with the number actually stored, and a mid-level difficulty change can never leave a
-     * half-scaled enemy alive. Armour is intentionally NOT scaled -- armour is a damage
-     * *type* mechanic (55% absorption), and scaling it would silently change how every
-     * weapon performs against heavies. */
+    /* 難度只在生成時套用一次，而不是在每次傷害事件時套用。原因有二：AI 拿來推理的血條
+     * （「我是否已低於痛苦閾值」）會與實際儲存的數值保持一致；而且中途改難度也絕不會
+     * 留下半套用的敵人。護甲刻意「不」縮放 —— 護甲是一種傷害「型別」機制（吸收 55%），
+     * 縮放它會無聲地改變每把武器對重甲敵人的表現。 */
     e->health = d->health * g_waves.diff_health;
     e->armor = d->armor;
     e->max_health = e->health;
-    /* On the hardest setting enemies do not flinch: pain stagger is a difficulty reward,
-     * not a fixed property of the archetype. */
+    /* 最高難度下敵人不會畏縮：痛苦硬直（pain stagger）是難度給予的獎勵，而不是原型的
+     * 固有屬性。 */
     e->pain_scale = (g_waves.difficulty >= 3) ? 0.0f : 1.0f;
     e->attack_timer = bp_rng_range(&g_engine.rng, 0.0f, d->attack_cooldown);
     e->strafe_dir = bp_rng_range(&g_engine.rng, 0.0f, 1.0f) < 0.5f ? -1.0f : 1.0f;
@@ -215,8 +227,8 @@ bp_handle bp_enemy_spawn(bp_enemy_type type, Vector3 pos, float yaw, bool dorman
     g_enemies.spawned_total++;
     g_enemies.alive_count++;
 
-    /* spawn-in feedback: a ring and a short ember burst so a new arrival is never missed.
-     * Missing a spawn is the number one cause of "that felt unfair" in arena shooters. */
+    /* 生成回饋：一圈衝擊環加一小團火星，確保新的進場永遠不會被漏看。漏掉一次生成，是
+     * 競技場射擊遊戲中「這感覺不公平」的頭號原因。 */
     bp_fx_particle(PTX_RING, Vector3Add(pos, (Vector3){ 0, 0.4f, 0 }), (Vector3){ 0, 0, 0 },
                    0.36f, d->radius * 1.2f, d->radius * 5.0f,
                    (Color){ 255, 120, 60, 200 }, (Color){ 255, 40, 20, 0 });
@@ -231,7 +243,7 @@ bp_handle bp_enemy_spawn(bp_enemy_type type, Vector3 pos, float yaw, bool dorman
 }
 
 /* ====================================================================================== */
-/* 3. hitboxes                                                                             */
+/* 3.命中框（hitbox）                                                                        */
 /* ====================================================================================== */
 bool bp_enemy_body_box(bp_enemy *e, bp_aabb *out)
 {
@@ -248,8 +260,8 @@ bool bp_enemy_head_box(bp_enemy *e, bp_aabb *out)
 {
     if (!e || !out) return false;
     const bp_enemy_def *d = &g_enemies.def[e->type];
-    if (d->body_set == 1) return false;          /* hounds have no distinct head */
-    if (d->body_set == 3) return false;          /* turret: no headshot bonus */
+    if (d->body_set == 1) return false;          /* hound 沒有獨立的頭部 */
+    if (d->body_set == 3) return false;          /* 砲塔：不提供爆頭加成 */
 
     float r = d->radius * 0.62f;
     float headH = d->height * 0.20f;
@@ -301,7 +313,7 @@ void bp_enemy_alert_nearby(Vector3 pos, float radius)
 }
 
 /* ====================================================================================== */
-/* 4. AI helpers                                                                           */
+/* 4. AI輔助函式                                                                             */
 /* ====================================================================================== */
 static void set_state(bp_enemy *e, bp_enemy_state s)
 {
@@ -310,9 +322,9 @@ static void set_state(bp_enemy *e, bp_enemy_state s)
     e->state_time = 0.0f;
 }
 
-/* Perception: sight is a LOS ray from the enemy's eye to the player's chest, range limited.
- * Hearing uses last-known-position memory so an enemy that loses sight keeps searching
- * instead of instantly forgetting -- the difference between "dumb" and "hunting". */
+/* 感知：視覺是一條從敵人眼部到玩家胸口的射線（LOS），並受距離限制。聽覺則依賴「最後
+ * 已知位置」的記憶，因此失去視線的敵人會繼續搜尋，而不是立刻忘記 —— 這是「笨」與
+ * 「在追獵」之間的差別。 */
 static void perceive(bp_enemy *e, const bp_enemy_def *d, Vector3 playerPos, Vector3 playerEye,
                      bool playerAlive)
 {
@@ -330,12 +342,12 @@ static void perceive(bp_enemy *e, const bp_enemy_def *d, Vector3 playerPos, Vect
     bool sees = false;
     if (dist < d->sight_range)
     {
-        /* A 140 degree view cone: enemies behind you should not turn to face you instantly,
-         * that is the single most immersion-breaking AI behaviour in a shooter. */
+        /* 140 度的視野錐（view cone）：站在你背後的敵人不該立刻轉身面對你，那是射擊遊戲
+         * 中最破壞沉浸感的 AI 行為。 */
         Vector3 fwd = { sinf(e->yaw * BP_DEG2RAD), 0.0f, cosf(e->yaw * BP_DEG2RAD) };
         Vector3 to = Vector3Normalize(Vector3Subtract(chest, eye));
         float dot = Vector3DotProduct(fwd, to);
-        bool inCone = (dot > 0.34f) || (dist < 5.0f);   /* close range = full awareness */
+        bool inCone = (dot > 0.34f) || (dist < 5.0f);   /* 近距離 = 完全感知 */
         if (inCone && bp_world_line_of_sight(eye, chest)) sees = true;
     }
 
@@ -349,7 +361,7 @@ static void perceive(bp_enemy *e, const bp_enemy_def *d, Vector3 playerPos, Vect
         if (e->state == ES_DORMANT || e->state == ES_IDLE)
         {
             set_state(e, ES_PURSUE);
-            /* first-sight vocalisation, throttled by the sfx cooldown table */
+            /* 首次目視的叫聲，由 sfx 冷卻表節流 */
             bp_audio_play_at((bp_sfx_id)d->sfx_sight, e->pos, playerEye, bp_camera_forward(), 1.0f);
             bp_enemy_alert_nearby(e->pos, d->hear_range * 0.8f);
         }
@@ -361,7 +373,7 @@ static void perceive(bp_enemy *e, const bp_enemy_def *d, Vector3 playerPos, Vect
     BP_UNUSED(playerEye);
 }
 
-/* Steering: seek + separation + obstacle avoidance + strafe. All horizontal. */
+/* 導向（steering）：追擊 + 分離 + 障礙物閃避 + 橫移。全部只在水平面上運作。 */
 static Vector3 steer(bp_enemy *e, const bp_enemy_def *d, Vector3 target, float desiredSpeed,
                      bool pursue)
 {
@@ -372,8 +384,8 @@ static Vector3 steer(bp_enemy *e, const bp_enemy_def *d, Vector3 target, float d
 
     Vector3 right = { seek.z, 0.0f, -seek.x };
 
-    /* ---- strafe: orbiting is what makes an arena enemy threatening instead of a
-     *      damage sponge walking into your crosshair ---- */
+    /* ---- 橫移：會繞著你打轉，才讓競技場裡的敵人有威脅感，而不只是一隻走進你準心的
+     *      血袋 ---- */
     e->strafe_timer -= GetFrameTime();
     if (e->strafe_timer <= 0.0f)
     {
@@ -385,7 +397,7 @@ static Vector3 steer(bp_enemy *e, const bp_enemy_def *d, Vector3 target, float d
     float strafeAmt = 0.0f;
     if (pursue && dist < 22.0f && dist > d->attack_range * 0.7f) strafeAmt = e->strafe_dir * d->strafe;
 
-    /* ---- separation: enemies must not stack into one blob ---- */
+    /* ---- 分離：敵人絕不能疊成同一團 ---- */
     Vector3 sep = { 0, 0, 0 };
     bp_pool_compact(&g_enemies.pool);
     for (uint32_t i = 0; i < g_enemies.pool.iter_count; i++)
@@ -399,9 +411,8 @@ static Vector3 steer(bp_enemy *e, const bp_enemy_def *d, Vector3 target, float d
             sep = Vector3Add(sep, Vector3Scale(delta, (minD - dd) / (minD * dd) * 2.6f));
     }
 
-    /* ---- obstacle avoidance: whisker forward plus two diagonals. The first whisker that
-     *      hits contributes a lateral push away from the surface normal, which produces
-     *      wall-following without any pathfinding at all. ---- */
+    /* ---- 障礙物閃避：一根向前的鬚毛（whisker）加兩根斜向的。最先撞到的那根會沿著表面
+     *      法線的垂直方向推出去，於是在完全沒有尋路的情況下做出貼牆行走。 ---- */
     Vector3 avoid = { 0, 0, 0 };
     if (desiredSpeed > 0.1f)
     {
@@ -427,8 +438,8 @@ static Vector3 steer(bp_enemy *e, const bp_enemy_def *d, Vector3 target, float d
                 weight *= 1.0f - BP_CLAMP(t / whiskerLen, 0.0f, 1.0f);
                 Vector3 lat = { -n.z, 0.0f, n.x };
                 if (Vector3Length(lat) < 0.001f) lat = right;
-                /* pick the lateral direction that agrees with our current heading so the
-                 * enemy commits to one side instead of oscillating */
+                /* 選一個與目前前進方向一致的側向，好讓敵人認定一側走到底，而不是左右
+                 * 振盪 */
                 if (Vector3DotProduct(lat, e->vel) < 0.0f && w == 0) lat = Vector3Scale(lat, -1.0f);
                 else if (w > 0 && Vector3DotProduct(lat, seek) < 0.0f) lat = Vector3Scale(lat, -1.0f);
                 avoid = Vector3Add(avoid, Vector3Scale(lat, weight));
@@ -446,7 +457,7 @@ static Vector3 steer(bp_enemy *e, const bp_enemy_def *d, Vector3 target, float d
     return out;
 }
 
-/* the archetype's reference speed, used to normalise the acceleration response */
+/* 原型的參考速度，用來正規化加速度反應 */
 static float desiredSpeedGuard(bp_enemy *e)
 {
     const bp_enemy_def *d = &g_enemies.def[e->type];
@@ -455,15 +466,14 @@ static float desiredSpeedGuard(bp_enemy *e)
 
 static void move_enemy(bp_enemy *e, const bp_enemy_def *d, Vector3 desired, float dt)
 {
-    /* accelerate toward the desired velocity rather than teleporting to it: enemies that
-     * change direction instantly read as robotic and are much harder to lead with a
-     * projectile weapon. */
+    /* 朝期望速度「加速」，而不是瞬間跳過去：能立刻改變方向的敵人讀起來像機器人，而且用
+     * 投射物武器預判它的落點會困難得多。 */
     float accel = e->on_ground ? 22.0f : 6.0f;
     e->vel.x = bp_damp(e->vel.x, desired.x, accel / BP_MAX(desiredSpeedGuard(e), 0.001f) * 0.1f, dt);
     e->vel.y += GRAVITY * dt;
     e->vel.z = bp_damp(e->vel.z, desired.z, accel / BP_MAX(desiredSpeedGuard(e), 0.001f) * 0.1f, dt);
 
-    /* clamp horizontal speed so a strafe+seek sum can never exceed the archetype's run speed */
+    /* 夾住水平速度，讓「橫移 + 追擊」的向量和永遠不會超過原型的奔跑速度 */
     Vector3 horiz = { e->vel.x, 0.0f, e->vel.z };
     float hs = Vector3Length(horiz);
     float maxS = d->speed_run * 1.12f;
@@ -481,7 +491,7 @@ static void move_enemy(bp_enemy *e, const bp_enemy_def *d, Vector3 desired, floa
         e->on_ground = true;
     }
 
-    /* face the direction of travel (or the target when attacking) */
+    /* 面向移動方向（攻擊時則面向目標） */
     if (hs > 0.35f)
     {
         float targetYaw = atan2f(e->vel.x, e->vel.z) * BP_RAD2DEG;
@@ -490,7 +500,7 @@ static void move_enemy(bp_enemy *e, const bp_enemy_def *d, Vector3 desired, floa
 }
 
 /* ====================================================================================== */
-/* 5. combat                                                                               */
+/* 5. 戰鬥                                                                                   */
 /* ====================================================================================== */
 static void enemy_attack(bp_enemy *e, const bp_enemy_def *d, Vector3 playerPos, Vector3 playerEye)
 {
@@ -502,9 +512,8 @@ static void enemy_attack(bp_enemy *e, const bp_enemy_def *d, Vector3 playerPos, 
 
     if (d->projectile)
     {
-        /* Turrets lead their target slightly so standing still in the open is punished but
-         * a strafing player can dodge -- both halves of that sentence are required for the
-         * encounter to be fair. */
+        /* 砲塔會對目標做少量預判，因此站在空地不動會被懲罰，而持續橫移的玩家躲得開 ——
+         * 這句話的兩半都必須成立，遭遇戰才算公平。 */
         Vector3 to = Vector3Subtract(chest, eye);
         float len = Vector3Length(to);
         if (len < 0.01f) return;
@@ -522,7 +531,7 @@ static void enemy_attack(bp_enemy *e, const bp_enemy_def *d, Vector3 playerPos, 
         return;
     }
 
-    /* melee */
+    /* 近戰 */
     if (dist <= d->attack_range + 0.35f)
     {
         e->attack_wind = 1.0f;
@@ -532,18 +541,18 @@ static void enemy_attack(bp_enemy *e, const bp_enemy_def *d, Vector3 playerPos, 
         Vector3 dir = Vector3Normalize(Vector3Subtract(chest, eye));
         float dmg = d->attack_damage * g_waves.diff_damage;
         bp_player_damage(dmg, e->pos, 0.45f);
-        /* Knockback scales with the *unmodified* damage: a harder difficulty should hurt
-         * more, not throw the player across the arena. Those are different kinds of hard. */
+        /* 擊退依「未經難度修正」的傷害縮放：更高難度應該是更痛，而不是把玩家甩過整個
+         * 競技場。那是兩種不同的「難」。 */
         bp_player_impulse(Vector3Scale(dir, d->attack_damage * 0.16f));
         bp_fx_shake(0.20f, 0.2f);
         e->damage_dealt_to_player += dmg;
         e->attack_timer = d->attack_cooldown * bp_rng_range(&g_engine.rng, 0.9f, 1.15f);
     }
-    else e->attack_timer = 0.12f;      /* re-check soon */
+    else e->attack_timer = 0.12f;      /* 很快再檢查一次 */
 }
 
 /* ====================================================================================== */
-/* 6. per-frame update                                                                     */
+/* 6. 每畫面更新                                                                             */
 /* ====================================================================================== */
 void bp_enemy_update(float dt, Vector3 playerPos, Vector3 playerEye, bool playerAlive)
 {
@@ -588,7 +597,7 @@ void bp_enemy_update(float dt, Vector3 playerPos, Vector3 playerEye, bool player
                 bool og = false; int mat = MAT_CONCRETE;
                 bp_world_resolve_body(&e->pos, d->radius * 0.9f, d->height * 0.4f, &e->vel, &og, &mat);
 
-                /* blood trail while the corpse still has momentum */
+                /* 牠還帶有動量時拖出的血跡 */
                 if (e->die_timer < 0.45f && bp_rng_range(&g_engine.rng, 0.0f, 1.0f) < 0.6f)
                     bp_fx_particle(PTX_BLOOD, bp_enemy_center(e),
                                    (Vector3){ bp_rng_range(&g_engine.rng, -1.0f, 1.0f),
@@ -614,7 +623,7 @@ void bp_enemy_update(float dt, Vector3 playerPos, Vector3 playerEye, bool player
 
                 perceive(e, d, playerPos, playerEye, playerAlive);
 
-                /* stagger has a minimum dwell so a hit reaction is always readable */
+                /* 硬直有一個最短停留時間，確保受擊反應永遠讀得清楚 */
                 if (e->state == ES_STAGGER)
                 {
                     e->stagger_timer -= dt;
@@ -627,7 +636,7 @@ void bp_enemy_update(float dt, Vector3 playerPos, Vector3 playerEye, bool player
                 float distToPlayer = Vector3Distance(e->pos, playerPos);
                 float distToMemory = Vector3Distance(e->pos, e->last_known_pos);
 
-                /* ---- state selection ---- */
+                /* ---- 狀態選擇 ---- */
                 bool inAttackRange = distToPlayer <= d->attack_range + 0.25f;
                 bool rangedReady = d->projectile && e->can_see && distToPlayer <= d->attack_range;
 
@@ -635,7 +644,7 @@ void bp_enemy_update(float dt, Vector3 playerPos, Vector3 playerEye, bool player
                 else if (e->can_see || e->memory_time > 0.0f) set_state(e, ES_PURSUE);
                 else set_state(e, ES_IDLE);
 
-                /* ---- movement ---- */
+                /* ---- 移動 ---- */
                 float desiredSpeed;
                 Vector3 target;
                 bool pursue = false;
@@ -647,8 +656,8 @@ void bp_enemy_update(float dt, Vector3 playerPos, Vector3 playerEye, bool player
                         target = playerPos;
                         if (!d->projectile)
                         {
-                            /* keep closing while attacking: melee enemies must not stop
-                             * dead at max range, that reads as a broken AI */
+                            /* 攻擊時仍要持續逼近：近戰敵人在最大射程處停住不動，讀起來
+                             * 就像 AI 壞掉了 */
                             desiredSpeed = (distToPlayer > d->attack_range * 0.75f)
                                          ? d->speed_run * d->aggression : d->speed_walk * 0.4f;
                         }
@@ -658,8 +667,8 @@ void bp_enemy_update(float dt, Vector3 playerPos, Vector3 playerEye, bool player
                         target = e->can_see ? playerPos : e->last_known_pos;
                         desiredSpeed = d->speed_run * d->aggression;
                         pursue = true;
-                        /* slow to a walk when closing on a remembered position so the enemy
-                         * does not sprint into a wall it can no longer see past */
+                        /* 接近「記憶中的位置」時放慢成步行，免得敵人一頭衝向它已經看不
+                         * 穿的牆 */
                         if (!e->can_see && distToMemory < 4.0f) desiredSpeed = d->speed_walk;
                         break;
                     default: /* ES_IDLE */
@@ -676,20 +685,20 @@ void bp_enemy_update(float dt, Vector3 playerPos, Vector3 playerEye, bool player
                 Vector3 want = steer(e, d, target, desiredSpeed, pursue);
                 move_enemy(e, d, want, dt);
 
-                /* face the player when attacking so the wind-up reads correctly */
+                /* 攻擊時（或看得見玩家時）面向玩家，前搖才讀得正確 */
                 if (e->state == ES_ATTACK || e->can_see)
                 {
                     float ty = atan2f(playerPos.x - e->pos.x, playerPos.z - e->pos.z) * BP_RAD2DEG;
                     e->yaw = bp_lerp_angle(e->yaw, ty, BP_CLAMP(dt * (e->state == ES_ATTACK ? 12.0f : 6.0f), 0.0f, 1.0f));
                 }
 
-                /* gait animation phase advances with actual ground speed */
+                /* 步態動畫的相位隨著實際地面速度前進 */
                 float hs = sqrtf(e->vel.x * e->vel.x + e->vel.z * e->vel.z);
                 e->leg_phase += dt * (2.2f + hs * 1.5f);
                 e->bob = sinf(e->leg_phase * 2.0f) * 0.035f * BP_CLAMP(hs / 4.0f, 0.0f, 1.0f);
 
-                /* idle enemies that have never seen the player eventually give up and go
-                 * back to wandering, so the arena does not stay permanently "hot" */
+                /* 從未見過玩家的閒置敵人最終會放棄、回去閒晃，競技場才不會永遠處於
+                 * 「警戒」狀態 */
                 if (e->state == ES_IDLE && e->state_time > 6.0f) e->wander_yaw += 25.0f * dt;
                 break;
             }
@@ -699,7 +708,7 @@ void bp_enemy_update(float dt, Vector3 playerPos, Vector3 playerEye, bool player
 }
 
 /* ====================================================================================== */
-/* 7. damage / death                                                                       */
+/* 7. 傷害 / 死亡                                                                            */
 /* ====================================================================================== */
 float bp_enemy_take_damage(bp_handle h, float amount, Vector3 point, Vector3 dir,
                            bool headshot, float knockback, bool *out_killed)
@@ -711,9 +720,8 @@ float bp_enemy_take_damage(bp_handle h, float amount, Vector3 point, Vector3 dir
     const bp_enemy_def *d = &g_enemies.def[e->type];
     float dmg = amount;
 
-    /* armour absorbs first and is consumed, exactly like the player's. Symmetric rules
-     * mean the player can reason about an armoured enemy using the same mental model they
-     * already have for their own armour. */
+    /* 護甲先行吸收並被消耗，規則與玩家完全一樣。對稱的規則意味著玩家可以用自己已經熟悉的
+     * 那套心智模型，去推理一個重甲敵人。 */
     if (e->armor > 0.0f)
     {
         float absorbed = BP_MIN(e->armor, dmg * 0.55f);
@@ -726,7 +734,7 @@ float bp_enemy_take_damage(bp_handle h, float amount, Vector3 point, Vector3 dir
     e->pain_flash = 1.0f;
     g_enemies.damage_received_total += amount;
 
-    /* wake up on being shot, even from behind */
+    /* 挨打就醒，即使子彈是從背後來的 */
     if (e->state == ES_DORMANT || e->state == ES_IDLE)
     {
         set_state(e, ES_PURSUE);
@@ -734,7 +742,7 @@ float bp_enemy_take_damage(bp_handle h, float amount, Vector3 point, Vector3 dir
         e->memory_time = 4.0f;
     }
 
-    /* knockback, scaled by the archetype so a brute does not get juggled */
+    /* 擊退依原型縮放，如此 brute 才不會被連續挑在空中打 */
     if (knockback > 0.0f && !d->is_static)
     {
         float k = knockback * d->knockback_scale * 0.55f;
@@ -743,10 +751,10 @@ float bp_enemy_take_damage(bp_handle h, float amount, Vector3 point, Vector3 dir
         if (dir.y > 0.1f) e->vel.y += dir.y * k * 0.5f;
     }
 
-    /* pain stagger: only if the archetype allows it and the hit was meaningful. Letting a
-     * pistol stagger a brute every hit would trivialise the fight. */
-    /* e->max_health, not d->health: the archetype value is pre-difficulty, so comparing
-     * against it would make stagger unreachable on the harder settings. */
+    /* 痛苦硬直：只有原型允許、而且這一擊確實有意義時才觸發。讓手槍每發都能硬直一隻
+     * brute，會把整場戰鬥變得太廉價。
+     * 比較的是 e->max_health 而不是 d->health：原型值是難度修正前的數字，拿它來比會讓
+     * 高難度下根本觸發不了硬直。 */
     if (!d->is_static && e->pain_scale > 0.0f && dmg > e->max_health * 0.06f &&
         bp_rng_range(&g_engine.rng, 0.0f, 1.0f) < d->pain_chance * e->pain_scale)
     {
@@ -769,7 +777,7 @@ float bp_enemy_take_damage(bp_handle h, float amount, Vector3 point, Vector3 dir
                     d->radius * 2.6f, 26.0f, (Color){ 255, 255, 255, 200 });
         bp_fx_shake(d->body_set == 2 ? 0.42f : 0.12f, 0.25f);
 
-        /* drops */
+        /* 掉落物 */
         if (!e->dropped_pickup)
         {
             e->dropped_pickup = true;
@@ -777,9 +785,8 @@ float bp_enemy_take_damage(bp_handle h, float amount, Vector3 point, Vector3 dir
             if (r < d->drop_health)
                 bp_pickup_spawn(PICKUP_HEALTH, e->pos, 25.0f, -1);
             else if (r < d->drop_health + d->drop_ammo)
-                /* Ammo drops are denominated in "one pickup of whatever you are holding",
-                 * not in rounds: a shotgun shell and an SMG magazine are wildly different
-                 * counts, and the weapon bank is the only module that knows the mapping. */
+                /* 彈藥掉落以「一組你手上那把武器的補給」為單位，而不是以發數計算：一顆
+                 * 霰彈與一個衝鋒彈匣的「發數」天差地遠，而只有武器模組知道這層對應。 */
                 bp_pickup_spawn(PICKUP_AMMO, e->pos,
                                 (float)g_weapon_table[g_weapons.current].ammo_per_pickup, -1);
             else if (r < d->drop_health + d->drop_ammo + d->drop_armor)
@@ -789,9 +796,8 @@ float bp_enemy_take_damage(bp_handle h, float amount, Vector3 point, Vector3 dir
         bp_player_register_kill((int)((float)d->score * (headshot ? 2.0f : 1.0f) * g_waves.diff_score));
         if (out_killed) *out_killed = true;
 
-        /* The wave director owns pacing and needs to know about kills the moment they
-         * happen (not at the end of the frame) so that a wave can complete on the same
-         * tick as its last enemy dies. That is what makes a clear feel instant. */
+        /* 波次導演掌控節奏，因此必須在擊殺發生的「當下」（而不是該畫面結束時）就知道，
+         * 這樣一波才能與牠最後一隻敵人死在同一拍結束。正是這點讓「清場」感覺是即時的。 */
         bp_waves_notify_kill(e->type);
     }
 
@@ -799,14 +805,13 @@ float bp_enemy_take_damage(bp_handle h, float amount, Vector3 point, Vector3 dir
 }
 
 /* ====================================================================================== */
-/* 8. animation + drawing                                                                  */
+/* 8. 動畫與繪製                                                                             */
 /* ====================================================================================== */
 static Matrix part_matrix(Vector3 world, float yawDeg, Vector3 local, Vector3 joint,
                           Vector3 axis, float angleDeg, Vector3 scale)
 {
-    /* Order (row-vector convention): local offset -> rotate about the joint -> yaw ->
-     * translate to world. Rotating about the joint rather than the part centre is what
-     * makes a leg swing from the hip instead of spinning in place. */
+    /* 順序（列向量慣例）：局部偏移 -> 繞關節旋轉 -> 偏航 -> 平移到世界座標。繞「關節」
+     * 而不是繞零件中心旋轉，才會讓腿從髖部甩出去，而不是在原地自轉。 */
     Matrix m = MatrixTranslate(local.x * scale.x, local.y * scale.y + world.y, local.z * scale.z);
     m = MatrixMultiply(m, MatrixTranslate(joint.x, joint.y, joint.z));
     m = MatrixMultiply(m, MatrixRotate(axis, angleDeg * BP_DEG2RAD));
@@ -818,13 +823,12 @@ static Matrix part_matrix(Vector3 world, float yawDeg, Vector3 local, Vector3 jo
 }
 
 /*
- * Draw one procedural body part at an arbitrary transform.
+ * 在任意轉換下繪製單一個程序化身體零件。
  *
- * raylib's DrawModelEx only accepts position + axis/angle + uniform-per-axis scale, which cannot
- * express our composed joint chains (translate * rotateX * yaw * translate). Instead we push the
- * full matrix through rlSetMatrixModelview() and call DrawMesh() directly -- this is exactly what
- * raylib does internally in DrawModel(), minus the transform decomposition. The shader and
- * material state are already set by the enclosing BeginMode3D pass.
+ * raylib 的 DrawModelEx 只接受「位置 + 軸／角度 + 各軸縮放」，無法表達我們組合出來的關節
+ * 鏈（translate * rotateX * yaw * translate）。因此我們把完整矩陣推進 rlSetMatrixModelview()
+ * 並直接呼叫 DrawMesh() —— 這正是 raylib 在 DrawModel() 內部做的事，只是省去了轉換拆解。
+ * 著色器與材質狀態已由外層的 BeginMode3D 傳遞設定好。
  */
 static void draw_part(bp_model_id id, Matrix m, Color tint)
 {
@@ -832,7 +836,7 @@ static void draw_part(bp_model_id id, Matrix m, Color tint)
     Model model = bp_model_get(id);
     if (model.meshCount <= 0) return;
 
-    /* Fold the tint into the material's diffuse so we keep a single code path. */
+    /* 把色調併入材質的 diffuse，如此只會有一條程式碼路徑。 */
     Color saved = model.materials[0].maps[MATERIAL_MAP_DIFFUSE].color;
     model.materials[0].maps[MATERIAL_MAP_DIFFUSE].color = tint;
 
@@ -865,7 +869,7 @@ static void draw_humanoid(bp_enemy *e, const bp_enemy_def *d, Color body, Color 
     Vector3 w = e->pos;
     Vector3 sc = { s, s, s };
 
-    /* legs: pivot at the hip */
+    /* 腿：以髖部為軸 */
     Vector3 hipL = { -0.19f * s, 0.78f * s, 0.0f };
     Vector3 hipR = {  0.19f * s, 0.78f * s, 0.0f };
     draw_part(MDL_ENEMY_LEG, part_matrix(w, e->yaw, hipL, (Vector3){ 0, 0.39f * s, 0 },
@@ -873,7 +877,7 @@ static void draw_humanoid(bp_enemy *e, const bp_enemy_def *d, Color body, Color 
     draw_part(MDL_ENEMY_LEG, part_matrix(w, e->yaw, hipR, (Vector3){ 0, 0.39f * s, 0 },
                                          (Vector3){ 1, 0, 0 }, -legSwing - deathTilt * 0.4f, sc), trim);
 
-    /* torso */
+    /* 身軀 */
     Vector3 torso = { 0.0f, 0.72f * s + e->bob, 0.0f };
     Matrix torsoM = MatrixTranslate(torso.x, w.y + torso.y, torso.z);
     torsoM = MatrixMultiply(torsoM, MatrixRotate((Vector3){ 1, 0, 0 }, -deathTilt * BP_DEG2RAD));
@@ -881,7 +885,7 @@ static void draw_humanoid(bp_enemy *e, const bp_enemy_def *d, Color body, Color 
     torsoM = MatrixMultiply(torsoM, MatrixTranslate(w.x, 0.0f, w.z));
     draw_part(MDL_ENEMY_TORSO, torsoM, body);
 
-    /* arms: shoulder pivot, one arm leads the attack wind-up */
+    /* 手臂：以肩膀為軸，其中一隻手帶動攻擊的前搖 */
     Vector3 shL = { -0.40f * s, 1.34f * s + e->bob, 0.0f };
     Vector3 shR = {  0.40f * s, 1.34f * s + e->bob, 0.0f };
     draw_part(MDL_ENEMY_ARM, part_matrix(w, e->yaw, shL, (Vector3){ 0, 0.31f * s, 0 },
@@ -889,7 +893,7 @@ static void draw_humanoid(bp_enemy *e, const bp_enemy_def *d, Color body, Color 
     draw_part(MDL_ENEMY_ARM, part_matrix(w, e->yaw, shR, (Vector3){ 0, 0.31f * s, 0 },
                                          (Vector3){ 1, 0, 0 }, -armSwing - windUp * 1.35f - deathTilt * 0.7f, sc), trim);
 
-    /* head: bobs and tilts with the body */
+    /* 頭：隨著身體起伏與傾斜 */
     Vector3 head = { 0.0f, 1.58f * s + e->bob * 1.4f, 0.02f * s };
     Matrix headM = MatrixTranslate(head.x, w.y + head.y, head.z);
     headM = MatrixMultiply(headM, MatrixRotate((Vector3){ 1, 0, 0 }, -deathTilt * BP_DEG2RAD));
@@ -897,8 +901,8 @@ static void draw_humanoid(bp_enemy *e, const bp_enemy_def *d, Color body, Color 
     headM = MatrixMultiply(headM, MatrixTranslate(w.x, 0.0f, w.z));
     draw_part(MDL_ENEMY_HEAD, headM, trim);
 
-    /* eyes: two additive dots. In a renderer with no light pass, glowing eyes are the
-     * cheapest and most effective way to make an enemy readable in a dark corner. */
+    /* 眼睛：兩個加性光點。在沒有光照 pass 的算圖器裡，發光的眼睛是讓敵人在黑暗角落中
+     * 讀得出來最便宜、也最有效的辦法。 */
     Vector3 fwd = { sinf(e->yaw * BP_DEG2RAD), 0.0f, cosf(e->yaw * BP_DEG2RAD) };
     Vector3 right = { fwd.z, 0.0f, -fwd.x };
     Vector3 eyeC = Vector3Add(Vector3Add(w, (Vector3){ 0, 1.60f * s + e->bob * 1.4f, 0 }),
@@ -919,7 +923,7 @@ static void draw_hound(bp_enemy *e, const bp_enemy_def *d, Color body, Color tri
     float deathTilt = (e->state == ES_DYING) ? BP_MIN(e->die_timer * 160.0f, 90.0f) : 0.0f;
     Vector3 sc = { s, s, s };
 
-    /* four legs at the body corners */
+    /* 四條腿分佈在身體四角 */
     static const Vector3 legPos[4] = {
         { -0.20f, 0.42f, -0.36f }, { 0.20f, 0.42f, -0.36f },
         { -0.20f, 0.42f,  0.36f }, { 0.20f, 0.42f,  0.36f },
@@ -932,7 +936,7 @@ static void draw_hound(bp_enemy *e, const bp_enemy_def *d, Color body, Color tri
                                              (Vector3){ 1, 0, 0 }, ph - deathTilt * 0.3f, sc), trim);
     }
 
-    /* body */
+    /* 身體 */
     Vector3 torso = { 0.0f, 0.40f * s + e->bob, 0.0f };
     Matrix m = MatrixTranslate(torso.x, w.y + torso.y, torso.z);
     m = MatrixMultiply(m, MatrixRotate((Vector3){ 1, 0, 0 }, -deathTilt * BP_DEG2RAD));
@@ -940,7 +944,7 @@ static void draw_hound(bp_enemy *e, const bp_enemy_def *d, Color body, Color tri
     m = MatrixMultiply(m, MatrixTranslate(w.x, 0.0f, w.z));
     draw_part(MDL_HOUND_BODY, m, body);
 
-    /* head: lunges forward during the attack wind-up */
+    /* 頭：攻擊前搖時向前撲出 */
     Vector3 head = { 0.0f, 0.60f * s + e->bob, (0.55f + e->lunge * 0.28f) * s };
     Matrix hm = MatrixTranslate(head.x, w.y + head.y, head.z);
     hm = MatrixMultiply(hm, MatrixRotate((Vector3){ 1, 0, 0 }, (-deathTilt - e->lunge * 22.0f) * BP_DEG2RAD));
@@ -979,7 +983,7 @@ static void draw_brute(bp_enemy *e, const bp_enemy_def *d, Color body, Color tri
     m = MatrixMultiply(m, MatrixTranslate(w.x, 0.0f, w.z));
     draw_part(MDL_BRUTE_TORSO, m, body);
 
-    /* huge arms that swing overhead on the attack */
+    /* 極巨大的手臂，攻擊時會高舉過頭揮下 */
     draw_part(MDL_BRUTE_ARM, part_matrix(w, e->yaw, (Vector3){ -0.86f * s, 1.86f * s, 0 },
                                          (Vector3){ 0, 0.52f * s, 0 }, (Vector3){ 1, 0, 0 },
                                          -legSwing * 0.5f - windUp - deathTilt * 0.6f, sc), trim);
@@ -1002,7 +1006,7 @@ static void draw_brute(bp_enemy *e, const bp_enemy_def *d, Color body, Color tri
 static void draw_turret(bp_enemy *e, const bp_enemy_def *d, Color body, Color trim)
 {
     Vector3 w = e->pos;
-    /* base is static; the barrel yaws with e->yaw and pitches at the player */
+    /* 底座固定不動；槍管隨 e->yaw 偏航，並朝玩家俯仰 */
     draw_part(MDL_TURRET_BASE, MatrixTranslate(w.x, w.y + 0.28f, w.z), body);
 
     float pitch = 0.0f;
@@ -1019,8 +1023,7 @@ static void draw_turret(bp_enemy *e, const bp_enemy_def *d, Color body, Color tr
     m = MatrixMultiply(m, MatrixTranslate(w.x, w.y + 1.05f, w.z));
     draw_part(MDL_TURRET_BARREL, m, trim);
 
-    /* status lamp: green when idle, red when tracking. A telegraph the player can read at
-     * a glance across the whole arena. */
+    /* 狀態指示燈：閒置時綠色，追蹤中紅色。玩家在競技場另一端瞥一眼就讀得懂的前搖訊號。 */
     Color lamp = e->can_see ? (Color){ 255, 60, 40, 255 } : (Color){ 90, 220, 120, 255 };
     if (e->state == ES_DYING) lamp = (Color){ 60, 60, 60, 255 };
     rlSetBlendMode(RL_BLEND_ADDITIVE);
@@ -1046,8 +1049,8 @@ void bp_enemy_draw(Camera3D cam, Vector3 viewer)
         Color body = pain_tint(d->color_body, flash);
         Color trim = pain_tint(d->color_trim, flash);
 
-        /* dying enemies sink and fade rather than vanishing: the corpse is feedback that
-         * the kill registered, and it stays readable during a fast fight. */
+        /* 垂死的敵人會下沉並淡出，而不是憑空消失：屍體是「這一擊確實算數」的回饋，而且
+         * 在快節奏戰鬥中依然讀得清楚。 */
         if (e->state == ES_DYING)
         {
             float k = BP_CLAMP(e->die_timer / 1.55f, 0.0f, 1.0f);
@@ -1063,8 +1066,8 @@ void bp_enemy_draw(Camera3D cam, Vector3 viewer)
             default: draw_humanoid(e, d, body, trim); break;
         }
 
-        /* contact shadow: a dark disc on the floor. Without it, enemies look like they are
-         * floating, and depth judgement breaks. */
+        /* 接觸陰影：地板上的一圈暗色圓盤。少了它，敵人看起來會像飄在空中，距離判斷也就
+         * 隨之失效。 */
         float fh = bp_world_floor_height(e->pos, d->radius, e->pos.y + 0.2f);
         if (fh > -1e8f && e->state != ES_DYING)
         {
@@ -1105,7 +1108,7 @@ void bp_enemy_draw_debug(void)
         Vector3 eye = { e->pos.x, e->pos.y + d->height * 0.8f, e->pos.z };
         bp_gfx_draw_ray(eye, e->last_known_pos, e->can_see ? GREEN : sc);
         DrawSphere(eye, 0.08f, sc);
-        /* health as a bar above the head: cheaper than 3D text and readable at any angle */
+        /* 頭頂的血條：比 3D 文字便宜，而且任何角度都讀得清楚 */
         float frac = BP_CLAMP(e->health / BP_MAX(e->max_health, 1.0f), 0.0f, 1.0f);
         Vector3 barBase = Vector3Add(e->pos, (Vector3){ -d->radius, d->height + 0.34f, 0 });
         DrawCube(Vector3Add(barBase, (Vector3){ 0, 0, 0 }), d->radius * 2.0f, 0.06f, 0.06f,

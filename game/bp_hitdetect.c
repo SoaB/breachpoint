@@ -11,7 +11,7 @@
 #include "../engine/bp_camera.h"
 
 /* ====================================================================================== */
-/* filters                                                                                 */
+/* 射線過濾器                                                                             */
 /* ====================================================================================== */
 bp_trace_filter bp_filter_default(void)
 {
@@ -31,13 +31,13 @@ bp_trace_filter bp_filter_projectile(bp_handle owner)
 }
 
 /* ====================================================================================== */
-/* enemy hitboxes                                                                          */
+/* 敵人命中框                                                                             */
 /* ====================================================================================== */
 /*
- * The head box sits on top of the body cylinder and is deliberately wider than a realistic
- * skull (0.62 x body radius). Reason: in a fast arena shooter, near-miss headshots that
- * register as body shots feel like the game cheated you, while generous head boxes feel
- * like skill. Every competitive shooter that has run the experiment lands on generous.
+ * 頭部框位於身體圓柱的頂端，而且刻意做得比寫實頭骨更寬（0.62 x 身體半徑）。
+ * 理由：在一款節奏快的競技場射擊遊戲裡，差一點點的爆頭被判定成身體命中，
+ * 感覺像遊戲對你出老千；而寬鬆的頭部框感覺像自己的技術。每個真的做過這個
+ * 實驗的競技型射擊遊戲，最後都落在寬鬆這一邊。
  */
 static bool trace_enemy(const bp_enemy *e, Vector3 origin, Vector3 dir, float maxDist,
                         float *outDist, bool *outHead, Vector3 *outPoint, Vector3 *outNormal)
@@ -67,7 +67,7 @@ static bool trace_enemy(const bp_enemy *e, Vector3 origin, Vector3 dir, float ma
 }
 
 /* ====================================================================================== */
-/* tracing                                                                                 */
+/* 射線追蹤                                                                               */
 /* ====================================================================================== */
 static bp_hit trace_core(Vector3 origin, Vector3 dir, float radius, float maxDist,
                          const bp_trace_filter *filter)
@@ -85,7 +85,7 @@ static bp_hit trace_core(Vector3 origin, Vector3 dir, float radius, float maxDis
     fallback.max_distance = maxDist;
     const bp_trace_filter *f = filter ? filter : &fallback;
 
-    /* ---- 1. enemies ---- */
+    /* ---- 1. 敵人 ---- */
     if (!f->ignore_enemies)
     {
         bp_pool_compact(&g_enemies.pool);
@@ -109,7 +109,7 @@ static bp_hit trace_core(Vector3 origin, Vector3 dir, float radius, float maxDis
         }
     }
 
-    /* ---- 2. destructibles ---- */
+    /* ---- 2. 可破壞物 ---- */
     if (!f->ignore_barrels)
     {
         for (int i = 0; i < g_world.solid_count; i++)
@@ -132,12 +132,12 @@ static bp_hit trace_core(Vector3 origin, Vector3 dir, float radius, float maxDis
         }
     }
 
-    /* ---- 3. world geometry ---- */
+    /* ---- 3. 世界幾何 ---- */
     if (!f->ignore_world)
     {
         float t; Vector3 n; const bp_solid *s = NULL;
-        /* bp_world_sweep already skips shoot-through geometry; radius widens the boxes so a
-         * rocket cannot clip a doorframe it visually cleared. */
+        /* bp_world_sweep 本來就會略過可射穿的幾何；radius 會把方框加寬，好讓火箭
+         * 不會撞上它視覺上早已通過的門框。 */
         if (bp_world_sweep(origin, Vector3Add(origin, Vector3Scale(dir, best)), radius, &t, &n, &s))
         {
             if (t <= best)
@@ -197,9 +197,9 @@ bool bp_sphere_hits_world(Vector3 p, float radius)
 }
 
 /* ====================================================================================== */
-/* damage                                                                                  */
+/* 傷害                                                                                   */
 /* ====================================================================================== */
-/* Apply damage to a destructible solid (barrel). Returns true if it was destroyed. */
+/* 對可破壞的固體（油桶）施加傷害。若油桶被摧毀則回傳 true。 */
 static bool damage_barrel(int solidIndex, float amount)
 {
     if (solidIndex < 0 || solidIndex >= g_world.solid_count) return false;
@@ -228,7 +228,7 @@ int bp_apply_explosion(Vector3 center, float radius, float maxDamage, float knoc
     if (playerDamageOut) *playerDamageOut = 0.0f;
     int hits = 0;
 
-    /* ---- enemies ---- */
+    /* ---- 敵人 ---- */
     bp_pool_compact(&g_enemies.pool);
     for (uint32_t i = 0; i < g_enemies.pool.iter_count; i++)
     {
@@ -241,17 +241,17 @@ int bp_apply_explosion(Vector3 center, float radius, float maxDamage, float knoc
         float d = Vector3Length(delta);
         if (d > radius) continue;
 
-        /* Line-of-sight check from the blast centre to the enemy's chest. Without it,
-         * splash damage goes through walls and the player learns to distrust the weapon. */
+        /* 從爆炸中心到敵人胸口的視線（line-of-sight）檢查。少了它，潑濺傷害會穿
+         * 牆而過，玩家就會學會不信任這把武器。 */
         if (!bp_world_line_of_sight(center, c))
         {
-            /* still allow partial damage if the wall is thin/grate: the sweep only stops at
-             * solid geometry, so reaching here means genuinely blocked. */
+            /* 牆很薄或屬於柵格（grate）時仍放行部分傷害：掃掠只會在實心幾何上
+             * 停下，所以會執行到這裡，就代表真的被擋住了。 */
             continue;
         }
 
         float falloff = 1.0f - BP_CLAMP(d / radius, 0.0f, 1.0f);
-        falloff = falloff * falloff * 0.65f + falloff * 0.35f;   /* soften the drop-off */
+        falloff = falloff * falloff * 0.65f + falloff * 0.35f;   /* 軟化遞減曲線 */
         float dmg = maxDamage * falloff;
 
         bp_handle h = bp_pool_handle_at(&g_enemies.pool, idx);
@@ -262,7 +262,7 @@ int bp_apply_explosion(Vector3 center, float radius, float maxDamage, float knoc
         hits++;
     }
 
-    /* ---- chain-detonate other barrels ---- */
+    /* ---- 連鎖引爆其他油桶 ---- */
     for (int i = 0; i < g_world.solid_count; i++)
     {
         bp_solid *s = &g_world.solids[i];
@@ -272,7 +272,7 @@ int bp_apply_explosion(Vector3 center, float radius, float maxDamage, float knoc
         if (damage_barrel(i, maxDamage * 0.7f)) hits++;
     }
 
-    /* ---- player ---- */
+    /* ---- 玩家 ---- */
     if (damagesPlayer)
     {
         Vector3 pp = Vector3Add(playerPos, (Vector3){ 0, 0.9f, 0 });
@@ -290,7 +290,7 @@ int bp_apply_explosion(Vector3 center, float radius, float maxDamage, float knoc
 }
 
 /* ====================================================================================== */
-/* damage dispatch                                                                         */
+/* 傷害分派                                                                               */
 /* ====================================================================================== */
 float bp_apply_damage(bp_handle target, const bp_damage_info *info, bool *out_killed)
 {

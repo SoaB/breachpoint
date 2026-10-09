@@ -19,7 +19,7 @@ bool bp_ray_aabb(Vector3 origin, Vector3 dir, const bp_aabb *box,
     {
         if (BP_ABS(d[i]) < 1e-8f)
         {
-            /* Ray parallel to slab: miss if origin outside slab. */
+            /* 射線與此 slab 平行：原點若落在 slab 之外即判定未命中。 */
             if (o[i] < bmin[i] || o[i] > bmax[i]) return false;
         }
         else
@@ -63,8 +63,8 @@ float bp_segment_point_distance(Vector3 a, Vector3 b, Vector3 p)
 
 bool bp_body_overlaps_box(Vector3 center, float radius, float height, const bp_aabb *box)
 {
-    /* Character body spans [center.y - height/2, center.y + height/2] around `center`,
-     * which is the *feet* position in this engine (see bp_fps_controller.h). */
+    /* 角色身體以 `center` 為中心，涵蓋 [center.y - height/2, center.y + height/2]；而這個
+     * `center` 在本引擎中代表的是「腳底」位置（見 bp_fps_controller.h）。 */
     float halfH = height * 0.5f;
     float cy = center.y + halfH;
 
@@ -72,7 +72,7 @@ bool bp_body_overlaps_box(Vector3 center, float radius, float height, const bp_a
     float dz = BP_MAX(box->min.z - center.z, BP_MAX(0.0f, center.z - box->max.z));
     float dy = BP_MAX(box->min.y - cy, BP_MAX(0.0f, cy - box->max.y));
 
-    /* Closest point on box to the capsule segment (approximated at body centre). */
+    /* 盒子上最接近膠囊線段的點（這裡以身體中心來近似）。 */
     float feetY = center.y;
     float dyFeet = BP_MAX(box->min.y - feetY, BP_MAX(0.0f, feetY - box->max.y));
     dy = BP_MIN(dy, dyFeet);
@@ -89,7 +89,7 @@ bool bp_resolve_body_box(Vector3 *center, float radius, float height, const bp_a
     float bodyMinY = center->y;
     float bodyMaxY = center->y + height;
 
-    /* No vertical overlap at all -> nothing to do (we are above or below the box). */
+    /* 完全沒有垂直重疊 -> 無事可做（此時我們在盒子的上方或下方）。 */
     if (bodyMaxY <= box->min.y || bodyMinY >= box->max.y) return false;
 
     float cx = BP_CLAMP(center->x, box->min.x, box->max.x);
@@ -110,7 +110,7 @@ bool bp_resolve_body_box(Vector3 *center, float radius, float height, const bp_a
     }
     else
     {
-        /* Centre is inside the box footprint: eject along the shallowest horizontal axis. */
+        /* 中心點落在盒子的水平輪廓內：沿穿透最淺的水平軸把身體彈出去。 */
         float penXmin = center->x - box->min.x;
         float penXmax = box->max.x - center->x;
         float penZmin = center->z - box->min.z;

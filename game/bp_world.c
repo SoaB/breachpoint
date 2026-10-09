@@ -1,5 +1,5 @@
 /******************************************************************************************
- * bp_world.c
+ * bp_world.c -- 關卡世界：材質表、幾何烘焙、碰撞解算、移動體、觸發器與天穹。
  ******************************************************************************************/
 #include "bp_world.h"
 #include "../engine/bp_gfx.h"
@@ -8,12 +8,12 @@
 bp_world g_world = { 0 };
 
 /* ====================================================================================== */
-/* 0. tuning constants                                                                     */
+/* 0. 調校常數                                                                               */
 /* ====================================================================================== */
-#define STEP_UP_HEIGHT      0.55f   /* ledge height the player walks up without jumping   */
+#define STEP_UP_HEIGHT      0.55f   /* 玩家無需跳躍即可直接走上去的台階高度 */
 #define HEAD_CLEARANCE      0.05f
 #define MAX_TRACE_DIST      400.0f
-#define CULL_DISTANCE       170.0f  /* dynamic boxes beyond this are not drawn            */
+#define CULL_DISTANCE       170.0f  /* 距離超過此值的動態方塊不會被繪製 */
 
 #define SKY_RINGS   18
 #define SKY_SLICES  40
@@ -24,10 +24,10 @@ static Model s_sky_model = { 0 };
 static bool  s_sky_ready = false;
 
 /* ====================================================================================== */
-/* 1. material table -- all surface behaviour is data                                      */
+/* 1. 材質表：所有表面行為都是資料                                                           */
 /* ====================================================================================== */
 static const bp_material_def s_materials[MAT_COUNT] = {
-    /* name           texture              impact          step           uv    fric  hard  pen  emit decal dmg */
+    /* 名稱         紋理                命中音效       腳步音效     UV     摩擦   硬度   穿透  發光  彈痕  傷害 */
     { "concrete",  TEX_WALL_CONCRETE,  SFX_HIT_WALL,  SFX_FOOTSTEP, 2.60f, 1.00f, 0.55f, false,false,true, 0.0f, {255,255,255,255} },
     { "brick",     TEX_WALL_BRICK,     SFX_HIT_WALL,  SFX_FOOTSTEP, 2.20f, 1.00f, 0.45f, false,false,true, 0.0f, {255,255,255,255} },
     { "metal",     TEX_WALL_METAL,     SFX_HIT_ARMOR, SFX_FOOTSTEP, 2.40f, 0.92f, 0.85f, false,false,true, 0.0f, {255,255,255,255} },
@@ -54,7 +54,7 @@ const bp_material_def *bp_world_material(int index)
 }
 
 /* ====================================================================================== */
-/* 2. level table                                                                          */
+/* 2. 關卡表                                                                                 */
 /* ====================================================================================== */
 const bp_level_def g_levels[] = {
     { "foundry",  "FOUNDRY",   "Symmetrical arena. Learn the movement.", 6, 150.0f, 0 },
@@ -64,7 +64,7 @@ const bp_level_def g_levels[] = {
 const int g_level_count = BP_ARRAY_COUNT(g_levels);
 
 /* ====================================================================================== */
-/* 3. authoring macros + level data                                                        */
+/* 3. 關卡編輯巨集與關卡資料                                                                 */
 /* ====================================================================================== */
 static void add_solid_impl(float x, float y, float z, float w, float h, float d, int mat)
 {
@@ -129,37 +129,35 @@ static void add_mover_impl(int solidIndex, float fx, float fy, float fz,
 #define ADD_TRIGGER(k,x,y,z,yaw,p,r,rad)  add_trigger_impl(k,x,y,z,yaw,p,r,rad)
 #define ADD_MOVER(i,fx,fy,fz,tx,ty,tz,s,sfx) add_mover_impl(i,fx,fy,fz,tx,ty,tz,s,sfx)
 
-/* WPN_* ids are referenced by the level data; declared here to keep bp_levels.inc free of
- * gameplay includes (the level file is meant to be editable by a designer). */
+/* 關卡資料會以名稱引用 WPN_* 編號；在這裡（而非標頭檔）宣告，是為了讓 bp_levels.inc
+ * 不必引入任何 gameplay 標頭檔——這個關卡檔的設計初衷是讓關卡設計師可以直接編輯。 */
 enum { WPN_PISTOL = 0, WPN_SHOTGUN = 1, WPN_SMG = 2, WPN_RAIL = 3, WPN_ROCKET = 4 };
 
 #include "bp_levels.inc"
 
 /* ====================================================================================== */
-/* 4. static mesh baking                                                                   */
+/* 4. 靜態網格烘焙                                                                           */
 /* ====================================================================================== */
 /*
- * Six faces per box. For each face we store: the normal, and the two in-plane basis
- * vectors used to compute UVs in *world units*. Using world units for UVs is what gives
- * every surface in the game the same texel density -- a 20 m wall and a 1 m crate both get
- * one texture repeat per `uv_scale` metres. Without it, level geometry immediately reads as
- * amateur because big walls get stretched textures.
+ * 每個方塊貢獻六個面。每個面儲存三個向量：法線，以及兩個用來計算 UV 的面內基底向量，
+ * 而 UV 是以「世界單位」為基準。用世界單位計算 UV，正是全遊戲每個表面紋理密度
+ * （texel density）一致的關鍵：20 公尺的牆和 1 公尺的木箱，同樣都是每 `uv_scale` 公尺
+ * 重複一次紋理。少了這一點，大面積牆面的貼圖會被明顯拉伸，關卡幾何立刻給人業餘作品的觀感。
  */
 typedef struct { Vector3 n, u, v; } bp_face_basis;
 
 static const bp_face_basis s_faces[6] = {
-    { { 0, 1, 0}, { 1, 0, 0}, { 0, 0, 1} },   /* +Y top     */
-    { { 0,-1, 0}, { 1, 0, 0}, { 0, 0,-1} },   /* -Y bottom  */
-    { { 0, 0, 1}, { 1, 0, 0}, { 0, 1, 0} },   /* +Z front   */
-    { { 0, 0,-1}, {-1, 0, 0}, { 0, 1, 0} },   /* -Z back    */
-    { { 1, 0, 0}, { 0, 0,-1}, { 0, 1, 0} },   /* +X right   */
-    { {-1, 0, 0}, { 0, 0, 1}, { 0, 1, 0} },   /* -X left    */
+    { { 0, 1, 0}, { 1, 0, 0}, { 0, 0, 1} },   /* +Y 頂面    */
+    { { 0,-1, 0}, { 1, 0, 0}, { 0, 0,-1} },   /* -Y 底面    */
+    { { 0, 0, 1}, { 1, 0, 0}, { 0, 1, 0} },   /* +Z 前面    */
+    { { 0, 0,-1}, {-1, 0, 0}, { 0, 1, 0} },   /* -Z 背面    */
+    { { 1, 0, 0}, { 0, 0,-1}, { 0, 1, 0} },   /* +X 右面    */
+    { {-1, 0, 0}, { 0, 0, 1}, { 0, 1, 0} },   /* -X 左面    */
 };
 
-/* Fake directional term per face. The renderer has no light pass (raylib's default
- * material is a flat shader), so baking a cheap lambert-ish term into vertex colours is how
- * the geometry gets readable form. Values are chosen so top faces read brightest and the
- * bottom is nearly black (never seen anyway). */
+/* 每個面一個假的方向性光照係數。算圖端沒有任何光照 pass（raylib 的預設材質是平面
+ * 著色），因此把一組廉價的 lambert 近似值烘進頂點顏色，就是幾何體獲得可讀立體感的
+ * 手段。數值刻意讓頂面最亮、底面接近全黑（反正底面永遠看不到）。 */
 static const float s_face_light[6] = { 1.00f, 0.30f, 0.78f, 0.62f, 0.86f, 0.55f };
 
 #define VERTS_PER_BOX 24
@@ -167,7 +165,7 @@ static const float s_face_light[6] = { 1.00f, 0.30f, 0.78f, 0.62f, 0.86f, 0.55f 
 
 static bool bake_static_meshes(void)
 {
-    /* count boxes per material */
+    /* 先按材質統計靜態方塊數量，決定每個批次緩衝區要配置多少頂點與索引 */
     int perMat[MAT_COUNT] = { 0 };
     for (int i = 0; i < g_world.solid_count; i++)
     {
@@ -209,18 +207,18 @@ static bool bake_static_meshes(void)
             if (s->dynamic || s->destroyed || s->material != m) continue;
 
             Vector3 mn = s->box.min, mx = s->box.max;
-            /* c is the UV origin: every face's texture coordinates are measured from the box
-             * centre, so adjacent boxes of different sizes still tile on a shared world grid. */
+            /* c 是 UV 原點：每個面的貼圖座標都從方塊中心量起，因此相鄰但尺寸不同的
+             * 方塊仍能對齊同一張世界格線，紋理彼此無縫接續。 */
             Vector3 c = Vector3Scale(Vector3Add(mn, mx), 0.5f);
 
-            /* 8 corners */
+            /* 方塊的八個角落；面繞序表 faceVerts 以索引選取每個面的四個角 */
             Vector3 corner[8] = {
                 { mn.x, mn.y, mn.z }, { mx.x, mn.y, mn.z },
                 { mx.x, mn.y, mx.z }, { mn.x, mn.y, mx.z },
                 { mn.x, mx.y, mn.z }, { mx.x, mx.y, mn.z },
                 { mx.x, mx.y, mx.z }, { mn.x, mx.y, mx.z },
             };
-            /* per-face corner winding (counter-clockwise seen from outside) */
+            /* 每個面的角落繞序（從方塊外側看為逆時針） */
             static const int faceVerts[6][4] = {
                 { 4, 5, 6, 7 },   /* +Y */
                 { 0, 3, 2, 1 },   /* -Y */
@@ -233,13 +231,13 @@ static bool bake_static_meshes(void)
             for (int f = 0; f < 6; f++)
             {
                 Vector3 fn = s_faces[f].n;
-                /* u/v in s_faces are unit vectors, so the dot products below are already
-                 * distances in metres -- which is exactly what uv_scale expects. */
+                /* s_faces 的 u/v 是單位向量，因此下方內積的結果直接就是以公尺計的
+                 * 距離——正好是 uv_scale 所預期的單位。 */
                 Vector3 u = s_faces[f].u;
                 Vector3 v = s_faces[f].v;
 
                 float light = s_face_light[f];
-                /* Emissive materials ignore the fake lighting term and go full bright. */
+                /* 自發光材質無視假光照係數，直接以全亮輸出。 */
                 if (md->emissive) light = 1.0f;
 
                 Color vc = (Color){
@@ -315,7 +313,7 @@ static void release_static_meshes(void)
     for (int i = 0; i < g_world.batch_count; i++)
     {
         if (!g_world.batch[i].valid) continue;
-        UnloadModel(g_world.batch[i].model);   /* frees the uploaded mesh */
+        UnloadModel(g_world.batch[i].model);   /* 連同已上傳至 GPU 的 mesh 一併釋放 */
         g_world.batch[i].valid = false;
     }
     g_world.batch_count = 0;
@@ -325,7 +323,7 @@ static void build_sky_dome(Color zenith, Color horizon, Color ground,
                            Vector3 glowDir, Color glowCol);
 
 /* ====================================================================================== */
-/* 6. load / unload                                                                        */
+/* 6. 載入 / 卸載                                                                            */
 /* ====================================================================================== */
 void bp_world_init(void)
 {
@@ -359,7 +357,7 @@ bool bp_world_load(int levelIndex)
 
     s_level_builders[levelIndex]();
 
-    /* bounds */
+    /* 掃過所有固體，算出整張地圖的軸對齊邊界範圍（bounds） */
     g_world.bounds_min = (Vector3){  1e9f,  1e9f,  1e9f };
     g_world.bounds_max = (Vector3){ -1e9f, -1e9f, -1e9f };
     for (int i = 0; i < g_world.solid_count; i++)
@@ -373,7 +371,7 @@ bool bp_world_load(int levelIndex)
         g_world.bounds_max.z = BP_MAX(g_world.bounds_max.z, b->max.z);
     }
 
-    /* player start */
+    /* 玩家出生點：從觸發器中找出 TRIG_PLAYER_START，順便統計敵人生成點數量 */
     g_world.player_start = (Vector3){ 0, 0.1f, 0 };
     g_world.player_start_yaw = 0.0f;
     g_world.spawn_enemy_count = 0;
@@ -384,7 +382,7 @@ bool bp_world_load(int levelIndex)
         if (t->kind == TRIG_ENEMY_SPAWN) g_world.spawn_enemy_count++;
     }
 
-    /* environment mood per level */
+    /* 每個關卡一組專屬的環境氛圍：環境光、霧色、霧密度與天穹配色 */
     switch (levelIndex)
     {
         case 0:
@@ -442,7 +440,7 @@ const bp_solid *bp_world_solid(int index)
 }
 
 /* ====================================================================================== */
-/* 7. collision                                                                            */
+/* 7. 碰撞                                                                                   */
 /* ====================================================================================== */
 bool bp_world_sweep(Vector3 from, Vector3 to, float radius,
                     float *out_t, Vector3 *out_normal, const bp_solid **out_solid)
@@ -469,8 +467,8 @@ bool bp_world_sweep(Vector3 from, Vector3 to, float radius,
         if (s->destroyed) continue;
         if (s->shoot_through) continue;
 
-        /* Early-out: reject boxes whose expanded AABB cannot possibly be reached. This
-         * cheap test is what keeps a full-list sweep affordable without a broadphase. */
+        /* 提早剔除：先用外擴後的 AABB 粗略濾掉線段絕對碰不到的方塊。這道廉價測試正是
+         * 在沒有 broadphase 的前提下，整條清單掃描還能負擔得起的關鍵。 */
         bp_aabb grown = bp_aabb_grow(&s->box, radius + 0.01f);
         float lo = BP_MIN(from.x, to.x), hi = BP_MAX(from.x, to.x);
         if (hi + radius < grown.min.x || lo - radius > grown.max.x) continue;
@@ -530,7 +528,7 @@ float bp_world_floor_height(Vector3 pos, float radius, float max_y)
     {
         const bp_solid *s = &g_world.solids[i];
         if (s->destroyed) continue;
-        /* horizontal overlap only */
+        /* 只檢查 XZ 水平重疊；高度上限由呼叫端傳入的 max_y 過濾 */
         if (pos.x + radius < s->box.min.x || pos.x - radius > s->box.max.x) continue;
         if (pos.z + radius < s->box.min.z || pos.z - radius > s->box.max.z) continue;
         if (s->box.max.y > max_y + 0.001f) continue;
@@ -539,9 +537,8 @@ float bp_world_floor_height(Vector3 pos, float radius, float max_y)
     return best;
 }
 
-/* Full character-vs-world resolution: horizontal separation, vertical landing, and a
- * step-up assist. The order matters -- resolve horizontally first so the step-up test sees
- * the position the player will actually occupy. */
+/* 完整的角色對世界碰撞解算：水平分離、垂直落地，外加走上台階的輔助。順序是有意的——
+ * 必須先解算水平，台階檢測看到的才會是玩家真正要佔據的位置，否則會在錯誤的立足點上判定。 */
 bool bp_world_resolve_body(Vector3 *feet, float radius, float height,
                            Vector3 *velocity, bool *on_ground, int *out_material)
 {
@@ -553,7 +550,7 @@ bool bp_world_resolve_body(Vector3 *feet, float radius, float height,
     bp_aabb body = bp_aabb_make((Vector3){ feet->x - radius, feet->y, feet->z - radius },
                                 (Vector3){ feet->x + radius, feet->y + height, feet->z + radius });
 
-    /* ---- horizontal push-out + step detection ---- */
+    /* ---- 水平推出 + 台階檢測 ---- */
     for (int i = 0; i < g_world.solid_count; i++)
     {
         const bp_solid *s = &g_world.solids[i];
@@ -572,7 +569,7 @@ bool bp_world_resolve_body(Vector3 *feet, float radius, float height,
                 float rise = s->box.max.y - feet->y;
                 if (rise > 0.02f && rise <= STEP_UP_HEIGHT)
                 {
-                    /* climbable: verify there is headroom at the new foot height */
+                    /* 可攀上：先驗證新的腳部高度上方留有頭部淨空，被擋住就退回水平推出 */
                     bp_aabb up = bp_aabb_make(
                         (Vector3){ feet->x - radius, s->box.max.y + HEAD_CLEARANCE, feet->z - radius },
                         (Vector3){ feet->x + radius, s->box.max.y + HEAD_CLEARANCE + height, feet->z + radius });
@@ -610,7 +607,7 @@ bool bp_world_resolve_body(Vector3 *feet, float radius, float height,
                 }
                 else
                 {
-                    /* centre inside the footprint: eject along the shallowest axis */
+                    /* 中心已陷入方塊投影內：沿最淺的軸向彈出（離哪個面最近就往哪邊推） */
                     float pxMin = feet->x - s->box.min.x, pxMax = s->box.max.x - feet->x;
                     float pzMin = feet->z - s->box.min.z, pzMax = s->box.max.z - feet->z;
                     float m = BP_MIN(BP_MIN(pxMin, pxMax), BP_MIN(pzMin, pzMax));
@@ -634,7 +631,7 @@ bool bp_world_resolve_body(Vector3 *feet, float radius, float height,
                             (Vector3){ feet->x + radius, feet->y + height, feet->z + radius });
     }
 
-    /* ---- vertical: ceiling clamp + floor landing ---- */
+    /* ---- 垂直解算：天花板夾限 + 地板落地 ---- */
     for (int i = 0; i < g_world.solid_count; i++)
     {
         const bp_solid *s = &g_world.solids[i];
@@ -645,7 +642,7 @@ bool bp_world_resolve_body(Vector3 *feet, float radius, float height,
 
         if (!s->shoot_through)
         {
-            /* standing on top */
+            /* 落在方塊頂面：腳部已陷入頂面下方但落差不大，直接抬上頂面並接地 */
             if (feet->y < s->box.max.y && feet->y > s->box.min.y + 0.01f &&
                 (s->box.max.y - feet->y) < height * 0.5f)
             {
@@ -655,7 +652,7 @@ bool bp_world_resolve_body(Vector3 *feet, float radius, float height,
                 groundMat = s->material;
                 continue;
             }
-            /* head hit the underside */
+            /* 頭部撞上方塊底面：把身體壓回天花板之下並消除向上速度 */
             if (feet->y < s->box.min.y && feet->y + height > s->box.min.y)
             {
                 feet->y = s->box.min.y - height;
@@ -664,8 +661,8 @@ bool bp_world_resolve_body(Vector3 *feet, float radius, float height,
             }
         }
 
-        /* Penetrable geometry (grate, forcefield) still supports weight if the player is
-         * above it, but never blocks the head -- that is what makes grates feel right. */
+        /* 可穿透幾何（柵欄、力場）在玩家位於其上方時仍要能承載重量，但絕不擋住頭部——
+         * 這正是柵欄腳感正確的關鍵：子彈穿得過、人站得住、跳起來不撞頭。 */
         if (feet->y < s->box.max.y && feet->y > s->box.min.y &&
             (s->box.max.y - feet->y) < 0.35f)
         {
@@ -676,7 +673,7 @@ bool bp_world_resolve_body(Vector3 *feet, float radius, float height,
         }
     }
 
-    /* world floor safety net: never let the player fall out of the map */
+    /* 世界地板保險網：無論如何都不能讓玩家掉出地圖外 */
     if (feet->y < g_world.bounds_min.y + 1.0f)
     {
         feet->y = g_world.bounds_min.y + 1.0f;
@@ -691,14 +688,14 @@ bool bp_world_resolve_body(Vector3 *feet, float radius, float height,
 }
 
 /* ====================================================================================== */
-/* 8. movers + triggers                                                                    */
+/* 8. 移動體與觸發器                                                                         */
 /* ====================================================================================== */
 static void mover_set_position(bp_mover *m, float phase)
 {
     bp_solid *s = m->solid;
     if (!s) return;
     Vector3 size = bp_aabb_size(&s->box);
-    /* eased so a door accelerates and settles instead of lurching at constant speed */
+    /* 加入緩動（easing）：讓門加速起步、緩和收尾，而不是以等速猛衝 */
     float e = phase < 0.5f ? 2.0f * phase * phase
                            : 1.0f - powf(-2.0f * phase + 2.0f, 2.0f) * 0.5f;
     Vector3 p = Vector3Add(m->from, Vector3Scale(Vector3Subtract(m->to, m->from), e));
@@ -746,8 +743,8 @@ void bp_world_update(float dt)
     }
 }
 
-/* Open every mover whose trigger volume contains `pos`. Called by the player controller
- * when it walks onto a floor pad, and by combat code when a door is shot open. */
+/* 開啟所有觸發範圍涵蓋 `pos` 的移動體。玩家控制器踩到地板壓板時會呼叫，戰鬥程式碼
+ * 把門射開時也會呼叫。 */
 void bp_world_activate_doors(Vector3 pos, float radius)
 {
     for (int i = 0; i < g_world.trigger_count; i++)
@@ -760,7 +757,7 @@ void bp_world_activate_doors(Vector3 pos, float radius)
         {
             bp_mover *mv = &g_world.movers[m];
             if (mv->open) continue;
-            /* the mover that is closest to this pad is the one it controls */
+            /* 離這個壓板最近的移動體，就是它所控制的門 */
             Vector3 mc = bp_aabb_center(&mv->solid->box);
             if (Vector3Distance(mc, t->position) > 9.0f) continue;
             mv->open = true;
@@ -797,10 +794,9 @@ int bp_world_spawn_count(int kind)
     return n;
 }
 
-/* Pick from a handful of random candidates and score them, rather than always taking the
- * single furthest spawn. Always-furthest makes enemy approach routes deterministic, and
- * players will learn to farm one doorway. Randomised-best keeps the pressure varied while
- * still respecting the minimum distance rule. */
+/* 從少數幾個隨機候選點裡評分挑選，而不是永遠取唯一最遠的生成點。永遠取最遠會讓敵人的
+ * 進攻路線固定不變，玩家很快就會學會蹲守同一個門口刷怪。隨機取最佳既保住壓力的變化性，
+ * 又仍然尊重最小距離規則。 */
 Vector3 bp_world_random_spawn(int kind, Vector3 avoid, float min_distance)
 {
     int best = -1;
@@ -837,15 +833,15 @@ Vector3 bp_world_random_spawn(int kind, Vector3 avoid, float min_distance)
 }
 
 /* ====================================================================================== */
-/* 9. sky dome                                                                             */
+/* 9. 天穹                                                                                   */
 /* ====================================================================================== */
 /*
- * Built once per level as a single inverted sphere with per-vertex colours. Two properties
- * make this the right call for a fixed-pipeline-capable renderer:
- *   - it needs NO custom shader, so the identical code path runs on OpenGL 3.3 and WebGL 1
- *   - it is one draw call and never needs to be re-centred on the camera because the arenas
- *     are small enough that parallax across 68 m is invisible at a 1000 unit radius
- * The same texture doubles as the sky in the main menu, which spins the camera slowly.
+ * 每個關卡建造一次：一顆內翻球體，以逐頂點顏色上色。對必須相容固定管線的算圖器而言，
+ * 這個做法有兩個關鍵優點：
+ *   - 完全不需要自訂著色器，因此 OpenGL 3.3 與 WebGL 1 跑的是同一條程式碼路徑
+ *   - 只需一次 draw call，而且永遠不必跟著相機重新置中——競技場夠小，在 1000 單位
+ *     半徑下，68 公尺範圍內的視差小到看不出來
+ * 同一顆天穹也兼作主選單的背景，主選單會讓相機緩慢自轉。
  */
 static void build_sky_dome(Color zenith, Color horizon, Color ground,
                            Vector3 glowDir, Color glowCol)
@@ -871,7 +867,7 @@ static void build_sky_dome(Color zenith, Color horizon, Color ground,
     for (int r = 0; r <= SKY_RINGS; r++)
     {
         float v = (float)r / (float)SKY_RINGS;
-        float pitch = (0.5f - v) * BP_PI;             /* +90 deg at the top */
+        float pitch = (0.5f - v) * BP_PI;             /* 頂端為 +90 度 */
         float cp = cosf(pitch), sp = sinf(pitch);
 
         for (int sIx = 0; sIx <= SKY_SLICES; sIx++)
@@ -899,7 +895,7 @@ static void build_sky_dome(Color zenith, Color horizon, Color ground,
             }
             c.a = 255;
 
-            /* furnace glow hugging the horizon in one direction */
+            /* 沿單一方向貼著地平線的熔爐光暈 */
             float d = Vector3DotProduct(dir, gd);
             if (d > 0.0f)
             {
@@ -910,7 +906,7 @@ static void build_sky_dome(Color zenith, Color horizon, Color ground,
                 c.b = (unsigned char)BP_CLAMP((int)((float)c.b + (float)glowCol.b * g), 0, 255);
             }
 
-            /* sparse stars above the horizon */
+            /* 地平線上方的稀疏星星 */
             if (dir.y > 0.10f)
             {
                 uint32_t h = (uint32_t)(u * 997.0f) * 374761393u + (uint32_t)(v * 991.0f) * 668265263u;
@@ -936,7 +932,7 @@ static void build_sky_dome(Color zenith, Color horizon, Color ground,
         {
             int a = r * (SKY_SLICES + 1) + sIx;
             int b = a + SKY_SLICES + 1;
-            /* reversed winding: the camera is INSIDE the dome */
+            /* 繞序反向：相機位於天穹的「內部」 */
             idx[ii++] = (unsigned short)a;
             idx[ii++] = (unsigned short)b;
             idx[ii++] = (unsigned short)(a + 1);
@@ -976,21 +972,21 @@ void bp_world_draw_sky(Camera3D cam)
     BP_UNUSED(cam);
     if (!s_sky_ready) { ClearBackground(g_world.fog_color); return; }
 
-    /* Depth writes off: the dome must never occlude geometry and must never be occluded by
-     * the far plane. Backface culling off: we render its inside surface. */
+    /* 關閉深度寫入：天穹絕不能遮住場景幾何，也絕不能被遠平面（far plane）裁掉。
+     * 關閉背面剔除：因為我們畫的是它的內側表面。 */
     rlDisableBackfaceCulling();
     DrawMesh(s_sky_mesh, s_sky_model.materials[0], MatrixIdentity());
     rlEnableBackfaceCulling();
 }
 
 /* ====================================================================================== */
-/* 10. world rendering                                                                     */
+/* 10. 世界繪製                                                                              */
 /* ====================================================================================== */
 void bp_world_draw(Camera3D cam, Vector3 viewer)
 {
     BP_UNUSED(cam);
 
-    /* ---- baked static geometry: one draw call per material for the whole map ---- */
+    /* ---- 烘焙好的靜態幾何：整張地圖每種材質一次 draw call ---- */
     for (int i = 0; i < g_world.batch_count; i++)
     {
         bp_static_batch *b = &g_world.batch[i];
@@ -998,7 +994,7 @@ void bp_world_draw(Camera3D cam, Vector3 viewer)
         DrawMesh(b->mesh, b->material, MatrixIdentity());
     }
 
-    /* ---- dynamic geometry: doors, lifts, destructible barrels ---- */
+    /* ---- 動態幾何：門、升降平台、可破壞的桶 ---- */
     float cull2 = CULL_DISTANCE * CULL_DISTANCE;
     for (int i = 0; i < g_world.solid_count; i++)
     {
@@ -1014,9 +1010,9 @@ void bp_world_draw(Camera3D cam, Vector3 viewer)
 
         if (s->explode)
         {
-            /* Barrels are the one dynamic prop worth a real silhouette: a textured
-             * cylinder reads as "shootable explosive" from any angle in a fraction of a
-             * second, which is the entire job of a prop in an arena shooter. */
+            /* 桶是唯一值得給予真實輪廓的動態道具：一個貼了貼圖的圓柱，從任何角度都能
+             * 在一瞬間讀出「可射爆的爆裂物」——這正是競技場射擊遊戲中一個道具的全部
+             * 職責。 */
             Vector3 base = { c.x, s->box.min.y, c.z };
             if (bp_model_valid(MDL_BARREL))
             {
@@ -1024,7 +1020,7 @@ void bp_world_draw(Camera3D cam, Vector3 viewer)
                 DrawModelEx(bp_model_get(MDL_BARREL), base, (Vector3){ 0, 1, 0 }, 0.0f, sc, md->tint);
             }
             else DrawCylinder(base, size.x * 0.5f, size.x * 0.5f, size.y, 12, md->tint);
-            /* hazard band so the barrel is legible even in silhouette */
+            /* 危險警示環：即使只看剪影也認得出這是個桶 */
             DrawCylinderWires(base, size.x * 0.52f, size.x * 0.52f, size.y, 12,
                               (Color){ 240, 200, 60, 190 });
         }
@@ -1037,10 +1033,9 @@ void bp_world_draw(Camera3D cam, Vector3 viewer)
         BP_UNUSED(t);
     }
 
-    /* ---- emissive bloom approximation ----
-     * raylib's default material has no light pass, so "the lights are on" has to be sold
-     * with additive halos. One slightly oversized additive cube per light panel costs
-     * almost nothing and reads instantly as emission. */
+    /* ---- 自發光 bloom 近似 ----
+     * raylib 的預設材質沒有光照 pass，所以「燈是亮的」這件事必須靠加成混合的光暈來
+     * 營造。每片燈板畫一個稍微放大的加成方塊，成本幾乎為零，卻能立刻被讀成發光體。 */
     rlSetBlendMode(RL_BLEND_ADDITIVE);
     for (int i = 0; i < g_world.solid_count; i++)
     {

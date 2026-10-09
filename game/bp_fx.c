@@ -1,5 +1,10 @@
 /******************************************************************************************
- * bp_fx.c
+ * bp_fx.c -- 特效系統：粒子（particle）、貼花（decal）、曳光彈（tracer）與畫面震動。
+ *
+ * 全部以固定大小的池（pool）實作，執行期不做動態配置：池滿時以環狀方式回收最舊的槽位，
+ * 寧可讓一團早已存在的煙提早消失，也不要放棄一記剛發生的彈著火花 —— 在射擊遊戲裡，後者
+ * 顯眼得多。繪製時不走 raylib 的 3D 圖元，而是把每個 billboard 手動送進 rlgl 批次
+ * （batch），好讓成千上萬個粒子只需極少的 draw call。
  ******************************************************************************************/
 #include "bp_fx.h"
 #include "../engine/bp_assets.h"
@@ -7,7 +12,7 @@
 bp_fx g_fx = { 0 };
 
 /* ====================================================================================== */
-/* lifecycle                                                                               */
+/* 生命週期                                                                                  */
 /* ====================================================================================== */
 void bp_fx_init(void) { bp_fx_reset(); }
 
@@ -16,9 +21,8 @@ void bp_fx_reset(void)
     memset(&g_fx, 0, sizeof(g_fx));
 }
 
-/* Round-robin allocation: when the pool is full we recycle the oldest slot rather than
- * refusing to spawn. In a shooter, dropping a fresh impact spark looks far worse than
- * cutting short an 800 ms-old smoke puff. */
+/* 環狀（round-robin）配置：池子滿了就回收最舊的槽位，而不是拒絕生成。在射擊遊戲裡，漏掉
+ * 一記剛發生的彈著火花，遠比縮短一團 800 ms 前就存在的煙霧來得難看。 */
 static bp_particle *alloc_particle(void)
 {
     for (int i = 0; i < MAX_PARTICLES; i++)
@@ -78,7 +82,7 @@ void bp_fx_particle(bp_particle_kind kind, Vector3 pos, Vector3 vel, float life,
 }
 
 /* ====================================================================================== */
-/* update                                                                                  */
+/* 更新                                                                                      */
 /* ====================================================================================== */
 void bp_fx_update(float dt, Vector3 worldFloorY)
 {
@@ -96,17 +100,17 @@ void bp_fx_update(float dt, Vector3 worldFloorY)
         float g = (p->gravity == 1) ? GRAVITY : (p->gravity == 2 ? GRAVITY * 0.18f : 0.0f);
         p->vel.y += g * dt;
 
-        /* drag: smoke decelerates hard, sparks barely at all */
+        /* 空氣阻力：煙劇烈減速，火花幾乎不受影響 */
         float drag = (p->kind == PTX_SMOKE) ? 2.6f : (p->kind == PTX_SPARK ? 0.9f : 0.35f);
         p->vel = Vector3Scale(p->vel, 1.0f / (1.0f + drag * dt));
 
         p->pos = Vector3Add(p->pos, Vector3Scale(p->vel, dt));
         p->roll += p->spin * dt;
 
-        /* smoke rises slightly as it cools */
+        /* 煙在冷卻時會略微上飄 */
         if (p->kind == PTX_SMOKE) p->pos.y += 0.55f * dt;
 
-        /* floor bounce */
+        /* 地面反彈 */
         if (p->bounce && p->pos.y < 0.06f && p->vel.y < 0.0f)
         {
             p->pos.y = 0.06f;
@@ -133,12 +137,12 @@ void bp_fx_update(float dt, Vector3 worldFloorY)
         if (t->age >= t->life) t->alive = 0;
     }
 
-    /* feedback decay */
+    /* 回饋效果的衰減 */
     g_fx.hit_marker    = BP_MAX(0.0f, g_fx.hit_marker - dt * 5.5f);
     g_fx.kill_marker   = BP_MAX(0.0f, g_fx.kill_marker - dt * 3.0f);
     g_fx.muzzle_flash  = BP_MAX(0.0f, g_fx.muzzle_flash - dt * 18.0f);
 
-    /* screen shake: decaying noise on all three axes, stronger on Y (feels like a jolt) */
+    /* 畫面震動：三個軸上逐漸衰減的雜訊，Y 軸的振幅較大（感覺更像被撞了一下） */
     if (g_fx.shake_amount > 0.001f)
     {
         g_fx.shake_time += dt;
@@ -171,7 +175,7 @@ void bp_fx_hit_marker(bool kill)
 }
 
 /* ====================================================================================== */
-/* decals / tracers                                                                        */
+/* 貼花 / 曳光                                                                               */
 /* ====================================================================================== */
 void bp_fx_decal(bp_texture_id tex, Vector3 pos, Vector3 normal, float size, float life, Color tint)
 {
@@ -184,15 +188,15 @@ void bp_fx_decal(bp_texture_id tex, Vector3 pos, Vector3 normal, float size, flo
     }
     if (!d)
     {
-        /* Every slot is live: steal the one at the cursor. decal_live must NOT change here,
-         * because we are replacing an already-counted decal rather than adding one. */
+        /* 所有槽位都在使用中：直接偷走游標所指的那一個。decal_live 在這裡絕對不能改變，因
+         * 為我們是替換掉一個早已計入統計的貼花，而不是新增一個。 */
         d = &g_fx.decals[g_fx.decal_head];
         g_fx.decal_head = (g_fx.decal_head + 1) % MAX_DECALS;
         recycled = true;
     }
 
     memset(d, 0, sizeof(*d));
-    /* push the decal a hair off the surface so it never z-fights with the wall */
+    /* 把貼花推離表面一丁點，讓它永遠不會與牆面發生 z-fighting */
     d->pos = Vector3Add(pos, Vector3Scale(normal, 0.02f));
     d->normal = normal;
     d->size = size;
@@ -222,7 +226,7 @@ void bp_fx_tracer(Vector3 from, Vector3 to, float width, float life, Color c)
 }
 
 /* ====================================================================================== */
-/* composed emitters                                                                       */
+/* 組合式發射器                                                                              */
 /* ====================================================================================== */
 void bp_fx_muzzle_flash(Vector3 pos, Vector3 dir, float intensity)
 {
@@ -431,7 +435,7 @@ void bp_fx_speed_burst(Vector3 pos, Vector3 dir)
 }
 
 /* ====================================================================================== */
-/* draw -- manual billboards into a single rlgl batch                                      */
+/* 繪製：手動 billboard 與單一 rlgl 批次                                                     */
 /* ====================================================================================== */
 static Color fade_color(Color a, Color b, float t)
 {
@@ -444,7 +448,7 @@ static Color fade_color(Color a, Color b, float t)
     };
 }
 
-/* Push one camera-facing quad with a roll angle directly into the active rlgl batch. */
+/* 把一個面向相機、帶有滾轉角（roll）的四邊形直接推進目前的 rlgl 批次（batch）。 */
 static void emit_quad(Camera3D cam, Texture2D tex, Vector3 center, float sizeX, float sizeY,
                       float rollDeg, Color color)
 {
@@ -464,8 +468,8 @@ static void emit_quad(Camera3D cam, Texture2D tex, Vector3 center, float sizeX, 
     Vector3 v2 = Vector3Add(Vector3Add(center, r), u);
     Vector3 v3 = Vector3Subtract(Vector3Add(center, r), u);
 
-    /* Two triangles per quad. rl_check_render_batch flushes automatically when the batch is
-     * full, which is what keeps this O(particles) rather than O(draw calls). */
+    /* 每個四邊形由兩個三角形組成。批次滿時 rl_check_render_batch 會自動清空送出，正是這
+     * 一點讓成本保持在 O(particles)，而不是 O(draw calls)。 */
     rlCheckRenderBatchLimit(12);
     rlSetTexture(tex.id);
 
@@ -485,7 +489,7 @@ static void emit_quad(Camera3D cam, Texture2D tex, Vector3 center, float sizeX, 
 
 void bp_fx_draw(Camera3D cam)
 {
-    /* ---- decals: alpha blended, drawn first so particles sit on top ---- */
+    /* ---- 貼花（decal）：以 alpha 混合繪製，而且畫在最底層，好讓粒子疊在它上面 ---- */
     for (int i = 0; i < MAX_DECALS; i++)
     {
         bp_decal *d = &g_fx.decals[i];
@@ -499,7 +503,7 @@ void bp_fx_draw(Camera3D cam)
         Color c = d->tint;
         c.a = (unsigned char)((float)c.a * BP_CLAMP(fade, 0.0f, 1.0f));
 
-        /* build a basis from the surface normal */
+        /* 由表面法線建出一組基底向量（basis） */
         Vector3 n = Vector3Normalize(d->normal);
         Vector3 ref = (BP_ABS(n.y) > 0.9f) ? (Vector3){ 1, 0, 0 } : (Vector3){ 0, 1, 0 };
         Vector3 tan1 = Vector3Normalize(Vector3CrossProduct(n, ref));
@@ -528,7 +532,7 @@ void bp_fx_draw(Camera3D cam)
         rlSetTexture(0);
     }
 
-    /* ---- tracers ---- */
+    /* ---- 曳光彈（tracer） ---- */
     for (int i = 0; i < MAX_HITSCAN_TRACERS; i++)
     {
         bp_tracer *t = &g_fx.tracers[i];
@@ -536,7 +540,7 @@ void bp_fx_draw(Camera3D cam)
         float k = t->age / t->life;
         Color c = t->color;
         c.a = (unsigned char)((float)c.a * (1.0f - k));
-        /* A tracer is a stretched billboard along its own direction. */
+        /* 曳光彈是一個沿自身方向拉伸的廣告牌（billboard）。 */
         Vector3 dir = Vector3Subtract(t->to, t->from);
         float len = Vector3Length(dir);
         if (len < 0.001f) continue;
@@ -564,8 +568,8 @@ void bp_fx_draw(Camera3D cam)
         rlSetTexture(0);
     }
 
-    /* ---- particles: sorted back-to-front is unnecessary because additive ones dominate;
-     *      alpha-blended smoke is drawn first, then additive on top. ---- */
+    /* ---- 粒子：不需要由遠到近排序，因為採 additive 混合的粒子佔多數；先畫 alpha 混合的
+     *      煙，再把 additive 的疊上去。 ---- */
     for (int pass = 0; pass < 2; pass++)
     {
         for (int i = 0; i < MAX_PARTICLES; i++)
@@ -583,7 +587,7 @@ void bp_fx_draw(Camera3D cam)
 
             if (p->kind == PTX_SPARK || p->kind == PTX_SHELL)
             {
-                /* stretch along velocity: motion blur for free */
+                /* 沿速度方向拉伸：免費得到運動模糊 */
                 float sp = Vector3Length(p->vel);
                 float stretch = BP_CLAMP(sp * 0.035f, 1.0f, 4.5f);
                 Vector3 fwd = Vector3Normalize(Vector3Subtract(cam.target, cam.position));
@@ -617,7 +621,7 @@ void bp_fx_draw(Camera3D cam)
         }
     }
 
-    /* ---- muzzle flash light: a short-lived additive sphere so the room reacts ---- */
+    /* ---- 槍口燈光：一個短命的 additive 光球，讓房間也跟著有反應 ---- */
     if (g_fx.muzzle_flash > 0.02f)
     {
         Texture2D soft = bp_tex(TEX_PARTICLE_SOFT);

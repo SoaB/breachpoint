@@ -1,22 +1,21 @@
 /******************************************************************************************
- * bp_world.h -- level data, surface materials, collision and world rendering.
+ * bp_world.h -- 關卡資料、表面材質、碰撞與世界繪製。
  *
- * COLLISION
- *   An array of axis-aligned solid boxes plus an early-out distance reject. No BSP, no
- *   octree, no navmesh. Arena maps are 60-160 boxes; a full sweep costs single-digit
- *   microseconds, so the frame budget goes to gameplay and rendering instead of traversal.
- *   Everything is AABB, which also means hit registration is bit-identical on desktop GL
- *   and WebGL -- players can never tell which build they are on.
+ * 碰撞
+ *   一組軸對齊（axis-aligned）的實心方塊，外加一個「先用距離就直接排除」的早退檢查。沒有
+ *   BSP、沒有 octree、沒有 navmesh。競技場地圖大約 60–160 個方塊；把整張地圖掃過一遍只要
+ *   個位數微秒，於是每幀的預算留給了玩法與繪製，而不是花在走訪資料結構上。一切都是 AABB，
+ *   這也意味著命中判定在桌機 OpenGL 與 WebGL 上是逐位元一致的 —— 玩家永遠猜不出自己跑的
+ *   是哪個版本。
  *
- * RENDERING
- *   Static geometry is merged at level load into ONE mesh per material, with per-face UVs
- *   scaled to world size. That gives a constant texel density across every surface (the
- *   single biggest tell of amateur level geometry) at ~14 draw calls for the whole map.
- *   Dynamic geometry (doors, lifts, exploding barrels) is drawn per box.
+ * 繪製
+ *   靜態幾何在載入關卡時，依材質合併成「每種材質一個」mesh，每個面的 UV 再依世界尺寸縮放。
+ *   這讓所有表面都有恆定的 texel 密度（業餘關卡幾何最容易露餡之處），整張地圖只要約 14 個
+ *   draw call。動態幾何（門、升降機、會爆炸的油桶）則逐方塊繪製。
  *
- * MATERIALS
- *   Data, not code. A box carries a material index; the table decides texture, impact FX,
- *   footstep sound, friction and penetrability. Adding "wet concrete" is a table row.
+ * 材質
+ *   這是資料，不是程式碼。方塊只攜帶一個材質索引，由表格決定貼圖、受擊特效、腳步聲、摩擦
+ *   與能否被射穿。要新增「濕水泥」這種材質，只需加一列表格資料。
  ******************************************************************************************/
 #ifndef BP_WORLD_H
 #define BP_WORLD_H
@@ -31,7 +30,7 @@
 #define MAX_MOVERS     32
 
 /* -------------------------------------------------------------------------------------- */
-/* materials                                                                               */
+/* 材質                                                                                       */
 /* -------------------------------------------------------------------------------------- */
 typedef enum {
     MAT_CONCRETE = 0,
@@ -57,47 +56,47 @@ typedef enum {
 typedef struct {
     const char   *name;
     bp_texture_id texture;
-    int           impact_sfx;      /* bp_sfx_id as int: keeps audio out of this header */
+    int           impact_sfx;      /* 以 int 存放的 bp_sfx_id：讓 audio 標頭檔不必出現在這裡 */
     int           step_sfx;
-    float         uv_scale;        /* world units per full texture repeat              */
-    float         friction;        /* 1.0 = normal ground                              */
-    float         hardness;        /* 0..1, scales debris + spark counts               */
-    bool          penetrable;      /* projectiles/hitscan pass through                 */
-    bool          emissive;        /* drawn unlit                                      */
+    float         uv_scale;        /* 一整次貼圖重複所佔的世界單位數                   */
+    float         friction;        /* 1.0 = 一般地面                                   */
+    float         hardness;        /* 0..1，用來縮放碎片與火花的數量                    */
+    bool          penetrable;      /* 子彈與 hitscan 可直接穿過                        */
+    bool          emissive;        /* 不受光照、直接繪製（unlit）                       */
     bool          decals_allowed;
-    float         damage_to_player;/* per second while standing in it (hazard floors)  */
+    float         damage_to_player;/* 站在其上時每秒造成的傷害（危險地板）               */
     Color         tint;
 } bp_material_def;
 
 /* -------------------------------------------------------------------------------------- */
-/* geometry                                                                                */
+/* 幾何                                                                                       */
 /* -------------------------------------------------------------------------------------- */
 typedef struct {
     bp_aabb box;
     int     material;
-    bool    dynamic;       /* re-drawn every frame, not baked into the static mesh */
-    bool    shoot_through; /* hitscan passes (grate, forcefield) but bodies do not */
-    bool    explode;       /* barrel: destroyed by damage, hurts nearby */
-    float   health;        /* only used when explode == true */
+    bool    dynamic;       /* 每幀重新繪製，不會被烘進靜態 mesh */
+    bool    shoot_through; /* hitscan 可穿過（鐵格板、力場），但軀體不行 */
+    bool    explode;       /* 油桶：可被傷害摧毀，並波及附近 */
+    float   health;        /* 只在 explode == true 時才會用到 */
     bool    destroyed;
 } bp_solid;
 
 typedef struct {
-    bp_solid *solid;       /* points into g_world.solids */
+    bp_solid *solid;       /* 指向 g_world.solids 內部的元素 */
     Vector3   from;
     Vector3   to;
     float     duration;
-    float     phase;       /* 0 closed .. 1 open */
+    float     phase;       /* 0 = 全關 .. 1 = 全開 */
     bool      open;
     bool      triggered;
     float     cooldown;
-    float     hold;          /* seconds spent fully open before auto-closing */
-    float     auto_close;    /* 0 = stays open until re-triggered */
+    float     hold;          /* 完全打開後停留幾秒才自動闔上 */
+    float     auto_close;    /* 0 = 保持開啟，直到再次被觸發 */
     int       sfx;
 } bp_mover;
 
 /* -------------------------------------------------------------------------------------- */
-/* triggers / spawn points                                                                 */
+/* 觸發器與出生點                                                                             */
 /* -------------------------------------------------------------------------------------- */
 typedef enum {
     TRIG_PLAYER_START = 0,
@@ -113,18 +112,18 @@ typedef enum {
 } bp_trigger_kind;
 
 typedef struct {
-    int     kind;          /* bp_trigger_kind */
+    int     kind;          /* bp_trigger_kind 列舉值 */
     Vector3 position;
     float   yaw;
-    int     param;         /* weapon id / pickup amount / mover index */
-    float   respawn;       /* seconds; 0 = one shot */
+    int     param;         /* 武器 id / 拾取數量 / mover 索引 */
+    float   respawn;       /* 幾秒；0 表示只觸發一次 */
     float   timer;
     bool    consumed;
     float   radius;
 } bp_trigger;
 
 /* -------------------------------------------------------------------------------------- */
-/* baked static mesh                                                                       */
+/* 烘焙的靜態 mesh                                                                            */
 /* -------------------------------------------------------------------------------------- */
 typedef struct {
     Mesh      mesh;
@@ -137,7 +136,7 @@ typedef struct {
 } bp_static_batch;
 
 /* -------------------------------------------------------------------------------------- */
-/* world                                                                                   */
+/* 世界                                                                                       */
 /* -------------------------------------------------------------------------------------- */
 typedef struct {
     char    id[32];
@@ -175,7 +174,7 @@ typedef struct {
 extern bp_world g_world;
 
 /* -------------------------------------------------------------------------------------- */
-/* level table                                                                             */
+/* 關卡表                                                                                     */
 /* -------------------------------------------------------------------------------------- */
 typedef struct {
     const char *id;
@@ -190,7 +189,7 @@ extern const bp_level_def g_levels[];
 extern const int g_level_count;
 
 /* -------------------------------------------------------------------------------------- */
-/* API                                                                                     */
+/* 對外介面（API）                                                                            */
 /* -------------------------------------------------------------------------------------- */
 void  bp_world_init(void);
 void  bp_world_shutdown(void);
@@ -198,7 +197,7 @@ bool  bp_world_load(int levelIndex);
 void  bp_world_unload(void);
 void  bp_world_update(float dt);
 
-/* collision */
+/* 碰撞 */
 bool  bp_world_sweep(Vector3 from, Vector3 to, float radius,
                      float *out_t, Vector3 *out_normal, const bp_solid **out_solid);
 bool  bp_world_resolve_body(Vector3 *feet, float radius, float height,
@@ -210,17 +209,17 @@ int   bp_world_material_at_point(Vector3 pos);
 int   bp_world_count_solids(void);
 const bp_solid *bp_world_solid(int index);
 
-/* triggers */
+/* 觸發器 */
 int     bp_world_next_spawn(int kind, int *cursor);
 Vector3 bp_world_random_spawn(int kind, Vector3 avoid, float min_distance);
 int     bp_world_spawn_count(int kind);
 Vector3 bp_world_player_start(float *out_yaw);
 void    bp_world_activate_doors(Vector3 pos, float radius);
 
-/* materials */
+/* 材質 */
 const bp_material_def *bp_world_material(int index);
 
-/* rendering */
+/* 繪製 */
 void bp_world_draw_sky(Camera3D cam);
 void bp_world_draw(Camera3D cam, Vector3 viewer);
 void bp_world_draw_debug(void);

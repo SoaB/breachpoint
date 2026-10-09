@@ -1,10 +1,9 @@
 /******************************************************************************************
- * bp_hud.c -- heads up display implementation.
+ * bp_hud.c -- HUD（heads-up display，抬頭顯示器）的實作。
  *
- * Everything here is drawn in the 640x360 virtual canvas (see bp_ui.h) so the HUD layout is
- * identical at every resolution. The only element that deliberately breaks that rule is the
- * crosshair, which is pinned to the exact screen centre in device pixels: it must coincide
- * with the camera's centre ray or the gun does not shoot where you look.
+ * 這裡的所有東西都繪製在 640x360 的虛擬畫布上（見 bp_ui.h），因此 HUD 版面在各種解析
+ * 度下都長得一模一樣。唯一刻意違反這條規則的元素是準星：它以裝置像素釘死在螢幕正中央，
+ * 因為它必須與相機的中心射線（centre ray）重合，否則槍就不會射向你盯著的地方。
  ******************************************************************************************/
 #include "bp_hud.h"
 
@@ -25,7 +24,7 @@
 bp_hud g_hud = { 0 };
 
 /* -------------------------------------------------------------------------------------- */
-/* layout: 640x360 virtual                                                                 */
+/* 版面：640x360 虛擬畫布                                                                         */
 /* -------------------------------------------------------------------------------------- */
 #define HUD_MARGIN        8.0f
 #define HUD_PANEL_H      44.0f
@@ -38,7 +37,7 @@ bp_hud g_hud = { 0 };
 #define HUD_HEALTH_SEG     10
 
 /* -------------------------------------------------------------------------------------- */
-/* helpers                                                                                 */
+/* 輔助函式                                                                                    */
 /* -------------------------------------------------------------------------------------- */
 static inline Color hud_col(float r, float g, float b, float a)
 {
@@ -48,9 +47,9 @@ static inline Color hud_col(float r, float g, float b, float a)
 
 static Color health_color(float frac)
 {
-    /* Green -> amber -> red. The colour is the primary readout and the number is the
-     * confirmation, so the ramp has to be distinguishable in peripheral vision: that means
-     * changing HUE (not just brightness) at every step. */
+    /* 綠 → 琥珀 → 紅。顏色是主要的讀值，數字只是拿來確認的，因此這條漸變必須在周邊視
+     * 覺（peripheral vision）中也分辨得出來：也就是說，每一步都必須改變色相（HUE），
+     * 而不能只改亮度。 */
     if (frac > 0.60f) return g_assets.pal_health;
     if (frac > 0.30f) return g_assets.pal_ammo;
     return g_assets.pal_danger;
@@ -58,8 +57,8 @@ static Color health_color(float frac)
 
 static void push_toast(const char *text, bp_toast_kind kind, float life)
 {
-    /* Oldest toast is overwritten when the queue is full. Dropping the *new* message would
-     * hide the most relevant information exactly when the screen is busiest. */
+    /* 佇列滿了就覆蓋掉最舊的 toast。若是丟掉「新」訊息，等於在畫面最忙亂的那一刻，把最
+     * 相關的資訊藏起來。 */
     bp_toast *t;
     if (g_hud.toast_count < HUD_MAX_TOASTS)
     {
@@ -82,7 +81,7 @@ static void push_toast(const char *text, bp_toast_kind kind, float life)
 }
 
 /* -------------------------------------------------------------------------------------- */
-/* public events                                                                           */
+/* 公開事件                                                                                    */
 /* -------------------------------------------------------------------------------------- */
 void bp_hud_toast(const char *text, bp_toast_kind kind, float life)
 {
@@ -101,8 +100,8 @@ void bp_hud_notify_damage(float angle, float strength)
 {
     if (g_hud.dir_count >= HUD_MAX_DMGDIRS)
     {
-        /* Replace the oldest indicator rather than refusing the new one: the most recent hit
-         * is the one worth pointing at. */
+        /* 取代最舊的指示器，而不是拒絕新的這一個：最近的一次受擊，才是值得指出方向的
+         * 那一次。 */
         int oldest = 0;
         for (int i = 1; i < HUD_MAX_DMGDIRS; i++)
             if (g_hud.dirs[i].age > g_hud.dirs[oldest].age) oldest = i;
@@ -117,7 +116,7 @@ void bp_hud_notify_damage(float angle, float strength)
 void bp_hud_set_visible(bool visible) { g_hud.visible = visible; }
 
 /* -------------------------------------------------------------------------------------- */
-/* init / update                                                                           */
+/* 初始化 / 更新                                                                                */
 /* -------------------------------------------------------------------------------------- */
 void bp_hud_init(void)
 {
@@ -145,13 +144,13 @@ void bp_hud_update(float dt)
 {
     g_hud.time += dt;
 
-    /* Smoothing. Every readable value is damped rather than assigned: a health number that
-     * jumps 34 -> 21 in one frame is unreadable, and the eye tracks a moving bar far better
-     * than a teleporting one. lambda is chosen so the value settles in ~0.25 s. */
+    /* 平滑化。每個供判讀的數值都走阻尼（damp）而不是直接賦值：一幀之內就從 34 跳到 21
+     * 的血量數字根本沒法讀，而且眼睛追蹤「移動中的長條」遠比追蹤「瞬間跳位的長條」來
+     * 得輕鬆。lambda 的取值讓數值在大約 0.25 秒內安定下來。 */
     g_hud.health = bp_damp(g_hud.health, g_player.health, 12.0f, dt);
     g_hud.armor  = bp_damp(g_hud.armor,  g_player.armor,  12.0f, dt);
 
-    /* Speed is smoothed harder: a readout that twitches with every footstep is noise. */
+    /* 速度的平滑力道更強：一個隨每次落腳而抽動的讀值只是雜訊。 */
     float hs = Vector3Length((Vector3){ g_player.vel.x, 0.0f, g_player.vel.z });
     g_hud.speed = bp_damp(g_hud.speed, hs, 8.0f, dt);
 
@@ -159,8 +158,8 @@ void bp_hud_update(float dt)
     g_hud.ammo_mag = wd ? g_weapons.mag[wd->id] : 0;
     g_hud.ammo_reserve = wd ? g_weapons.reserve[wd->id] : 0;
 
-    /* Feed the post shader. The HUD owns this because it owns the visual language of
-     * "you are hurt" / "you are fast"; the renderer just executes it. */
+    /* 餵給後製著色器。這些數值之所以歸 HUD 持有，是因為「你受傷了」「你很快」這套視覺
+     * 語言本來就屬於 HUD；算繪器只負責執行。 */
     bp_gfx_flash_damage(g_player.damage_flash * dt * 2.2f);
     bp_gfx_flash_heal(g_player.heal_flash * dt * 1.6f);
     g_gfx.speed_lines = BP_CLAMP((g_hud.speed - g_player.speed_ground) /
@@ -168,7 +167,7 @@ void bp_hud_update(float dt)
 
     g_hud.hurt_vignette = BP_MAX(g_player.damage_flash, g_hud.hurt_vignette - dt * 1.8f);
 
-    /* low ammo pulse: only when the magazine is genuinely low relative to this weapon */
+    /* 低彈藥脈動：只有當彈匣相對「這把武器」確實偏低時才亮起 */
     float magFrac = (wd && wd->mag_size > 0) ? (float)g_hud.ammo_mag / (float)wd->mag_size : 1.0f;
     g_hud.low_ammo_pulse = (magFrac <= 0.25f && g_hud.ammo_mag > 0)
                          ? 0.5f + 0.5f * sinf(g_hud.time * 7.0f)
@@ -176,15 +175,15 @@ void bp_hud_update(float dt)
 
     g_hud.intermission_left = (g_waves.state == WAVE_INTERMISSION) ? g_waves.intermission_left : 0.0f;
 
-    /* banners + toasts */
+    /* 橫幅與 toast */
     if (g_hud.banner_time > 0.0f) g_hud.banner_time -= dt;
     for (int i = 0; i < g_hud.toast_count; i++)
     {
         bp_toast *t = &g_hud.toasts[i];
         t->age += dt;
-        t->y = bp_damp(t->y, (float)i, 16.0f, dt);   /* slots re-flow as toasts expire */
+        t->y = bp_damp(t->y, (float)i, 16.0f, dt);   /* toast 到期後，各槽位會重新流動排列 */
     }
-    /* compact out the expired ones, keeping order */
+    /* 把到期的項目剔除並向前壓縮，順序保持不變 */
     int w = 0;
     for (int i = 0; i < g_hud.toast_count; i++)
     {
@@ -192,7 +191,7 @@ void bp_hud_update(float dt)
     }
     g_hud.toast_count = w;
 
-    /* damage direction indicators */
+    /* 受擊方向指示器 */
     for (int i = 0; i < g_hud.dir_count; i++) g_hud.dirs[i].age += dt;
     w = 0;
     for (int i = 0; i < g_hud.dir_count; i++)
@@ -201,7 +200,7 @@ void bp_hud_update(float dt)
 }
 
 /* -------------------------------------------------------------------------------------- */
-/* pieces                                                                                  */
+/* 部件繪製                                                                                    */
 /* -------------------------------------------------------------------------------------- */
 static void draw_vitals(void)
 {
@@ -214,12 +213,12 @@ static void draw_vitals(void)
     float arFrac = BP_CLAMP(g_hud.armor / BP_MAX(g_player.max_armor, 1.0f), 0.0f, 1.0f);
     Color hpCol = health_color(hpFrac);
 
-    /* The plate flashes red on the frame you are hit. A 2px inset flash reads far better
-     * than tinting the whole panel, which would obscure the numbers. */
+    /* 你挨打的那一幀，鈑件會閃紅。往內縮 2px 的閃光遠比把整塊面板染色好讀 —— 染色會
+     * 把數字蓋掉。 */
     Color border = hud_col(hpCol.r, hpCol.g, hpCol.b, 90 + g_hud.hurt_vignette * 165.0f);
     bp_ui_panel_notch(x, y, w, h, 6.0f, g_assets.pal_panel, border);
 
-    /* health */
+    /* 血量 */
     float barX = x + 8.0f, barW = w - 16.0f;
     bp_ui_text(barX, y + 4.0f, UI_FS_TINY, g_assets.pal_text_dim, "INTEGRITY");
     bp_ui_bar_segmented(barX, y + 12.0f, barW, 9.0f, hpFrac, HUD_HEALTH_SEG,
@@ -227,7 +226,7 @@ static void draw_vitals(void)
     bp_ui_text_align(x + w - 8.0f, y + 22.0f, UI_FS_LARGE, UI_ALIGN_RIGHT, hpCol,
                      "%d", (int)(g_hud.health + 0.5f));
 
-    /* armour */
+    /* 護甲 */
     bp_ui_text(barX, y + 26.0f, UI_FS_TINY, g_assets.pal_text_dim, "PLATING");
     bp_ui_bar(barX, y + 34.0f, barW * 0.62f, 6.0f, arFrac,
               g_assets.pal_armor, (Color){ 10, 11, 14, 220 }, (Color){ 0, 0, 0, 140 });
@@ -257,14 +256,14 @@ static void draw_weapon(void)
 
     bp_ui_text_align(x + w - 8.0f, y + 3.0f, UI_FS_TINY, UI_ALIGN_RIGHT, g_assets.pal_text_dim, "%s", wd->display_name);
 
-    /* The magazine count is the largest number on the HUD. That is a deliberate hierarchy:
-     * in a fight "how many shots do I have" is asked more often than anything else. */
+    /* 彈匣存量是 HUD 上最大的數字。這是刻意安排的視覺階層：在交火的時候，「我還剩幾
+     * 發」這個問題被問到的頻率，高過其他任何一個數字。 */
     bp_ui_text_align(x + w - 8.0f, y + 12.0f, UI_FS_LARGE, UI_ALIGN_RIGHT, ammoCol, "%d", g_hud.ammo_mag);
     float numW = bp_ui_text_width(TextFormat("%d", g_hud.ammo_mag), UI_FS_LARGE);
     bp_ui_text_align(x + w - 12.0f - numW, y + 20.0f, UI_FS_SMALL, UI_ALIGN_RIGHT, g_assets.pal_text_dim,
                "/ %d", g_hud.ammo_reserve);
 
-    /* per-slot pips: which weapons you own, and which one is out */
+    /* 各槽位的小標記（pip）：顯示你持有哪幾把武器、目前拔出來的是哪一把 */
     float pipX = x + 8.0f, pipY = y + HUD_PANEL_H - 11.0f;
     for (int i = 0; i < WPN_ID_COUNT; i++)
     {
@@ -279,8 +278,7 @@ static void draw_weapon(void)
         pipX += 12.0f;
     }
 
-    /* reload progress: a bar under the panel's top edge, so it is visible without moving the
-     * eye off the ammo number. */
+    /* 填彈進度：畫在面板上緣底下的一條長條，這樣不必把視線移開彈藥數字也看得到。 */
     if (g_weapons.state == WSTATE_RELOADING)
     {
         float f = bp_weapons_reload_fraction();
@@ -294,9 +292,8 @@ static void draw_weapon(void)
 
 static void draw_top_bar(void)
 {
-    /* Wave progress along the very top edge. One pixel-thick bands at the top of the screen
-     * are free peripheral information: they never occlude the fight and they always answer
-     * "how much longer". */
+    /* 波次進度沿著螢幕的最上緣展開。畫面頂端這些一像素厚的色帶是零成本的周邊資訊：它們
+     * 永遠不會擋到戰鬥畫面，而且隨時都在回答「還要多久」。 */
     float y = 0.0f;
     bp_ui_rect(0.0f, y, (float)UI_VW, HUD_TOPBAR_H, (Color){ 10, 11, 15, 200 });
 
@@ -305,15 +302,15 @@ static void draw_top_bar(void)
     for (int i = 0; i < total; i++)
     {
         Color c;
-        if (i + 1 < g_waves.wave_index) c = (Color){ 92, 226, 196, 210 };      /* cleared */
+        if (i + 1 < g_waves.wave_index) c = (Color){ 92, 226, 196, 210 };      /* 已過 */
         else if (i + 1 == g_waves.wave_index) c = g_waves.state == WAVE_COMPLETE
                                                 ? (Color){ 92, 226, 196, 255 }
-                                                : g_assets.pal_accent;          /* current */
-        else c = (Color){ 62, 66, 78, 200 };                                    /* future  */
+                                                : g_assets.pal_accent;          /* 目前 */
+        else c = (Color){ 62, 66, 78, 200 };                                    /* 未來 */
         bp_ui_rect((float)i * segW + 1.0f, y, segW - 2.0f, HUD_TOPBAR_H, c);
     }
 
-    /* wave label */
+    /* 波次標籤 */
     if (g_waves.state != WAVE_IDLE)
     {
         char label[48];
@@ -330,14 +327,14 @@ static void draw_top_bar(void)
                           g_assets.pal_text, (Color){ 0, 0, 0, 200 }, "%s", label);
     }
 
-    /* score, top right */
+    /* 分數，右上角 */
     bp_ui_text_shadow((float)UI_VW - HUD_MARGIN, HUD_TOPBAR_H + 3.0f, UI_FS_SMALL, UI_ALIGN_RIGHT,
                       g_assets.pal_ammo, (Color){ 0, 0, 0, 200 }, "%d", g_player.score);
     bp_ui_text_align((float)UI_VW - HUD_MARGIN, HUD_TOPBAR_H + 15.0f, UI_FS_TINY, UI_ALIGN_RIGHT,
                g_assets.pal_text_dim, "KILLS %d   ACC %d%%", g_player.kills,
                (int)(bp_weapons_accuracy() * 100.0f + 0.5f));
 
-    /* streak: only shown while one is live, because a permanent "x1" is noise */
+    /* 連殺（streak）：只在有進行中的連殺時顯示，因為常駐的「x1」只是雜訊 */
     if (g_player.streak >= 2)
     {
         float pulse = 0.7f + 0.3f * sinf(g_hud.time * 8.0f);
@@ -348,8 +345,8 @@ static void draw_top_bar(void)
 
 static void draw_speed_readout(void)
 {
-    /* Speed in m/s next to the vitals plate. Boomer shooters are played for movement, so the
-     * player needs to be able to see whether a strafe-jump actually worked. */
+    /* 以 m/s 為單位的速度，顯示在生命鈑件旁。Boomer shooter 玩的就是移動，所以玩家必須
+     * 能看得出某次平移跳（strafe-jump）到底有沒有成功。 */
     float x = HUD_MARGIN + HUD_VITALS_W + 8.0f;
     float y = (float)UI_VH - HUD_MARGIN - 12.0f;
 
@@ -362,8 +359,8 @@ static void draw_speed_readout(void)
     bp_ui_text(x + 22.0f, y - 3.0f, UI_FS_SMALL, c, "%.1f", (double)g_hud.speed);
     bp_ui_text(x + 58.0f, y, UI_FS_TINY, g_assets.pal_text_dim, "M/S");
 
-    /* a thin meter above the number: the fastest legal speed is marked, so anything past the
-     * mark is visibly "bonus" speed earned by circle-strafing */
+    /* 數字上方的一條細計量條：標線標出最快的合法速度，因此凡是超過標線的部分，一眼就
+     * 看得出是靠繞圈平移（circle-strafe）賺來的「獎勵」速度 */
     float barW = 76.0f;
     bp_ui_rect(x, y - 6.0f, barW, 2.0f, (Color){ 10, 11, 15, 200 });
     bp_ui_rect(x, y - 6.0f, barW * BP_MIN(frac, 1.0f), 2.0f, c);
@@ -376,9 +373,9 @@ static void draw_crosshair(void)
     const bp_weapon_def *wd = bp_weapons_current_def();
     if (!wd) return;
 
-    /* Gap is driven by the live spread cone: the crosshair is the accuracy readout. Scale is
-     * chosen so a tight pistol (0.15 deg aimed) is a near-dot and a shotgun hip shot (4.6
-     * deg, doubled by movement) is an unmistakable wide cross. */
+    /* 間隙由即時的散布錐（spread cone）驅動：準星本身就是精準度的讀值。比例是刻意挑的：
+     * 一把收得很緊的瞄準手槍（0.15 度）看起來接近一個點，而霰彈槍的腰射（4.6 度，移動
+     * 時再翻倍）則是一個不可能認錯的寬十字。 */
     float gap = 3.0f + g_weapons.spread_current * 3.2f;
     float len = (wd->pellets > 1) ? 3.0f : 5.0f;
 
@@ -388,8 +385,8 @@ static void draw_crosshair(void)
 
     bp_ui_crosshair(0.0f, 0.0f, gap, len, 1.0f, c, g_fx.hit_marker);
 
-    /* Pellet spread for shotguns: a ring at the cone radius, because nine separate crosses
-     * would be unreadable and a single cross would lie about where the pellets go. */
+    /* 霰彈槍的彈丸散布：在散布錐的半徑上畫一個圈，因為九個各自分開的十字沒法判讀，而
+     * 單獨一個十字又會對彈丸的去向說謊。 */
     if (wd->pellets > 1)
     {
         float r = gap + 4.0f + g_weapons.spread_current * 2.0f;
@@ -412,21 +409,21 @@ static void draw_damage_dirs(void)
         float alpha = k * BP_CLAMP(d->strength, 0.25f, 1.0f);
         if (alpha <= 0.01f) continue;
 
-        /* angle 0 = in front, +90 deg = to the right, matching atan2(right, forward) */
+        /* 角度 0 = 正前方，+90 度 = 右側，與 atan2(right, forward) 的定義一致 */
         float a = d->angle;
         float r = HUD_DIR_RADIUS + (1.0f - k) * 10.0f;
         float sx = cx + sinf(a) * r;
         float sy = cy - cosf(a) * r;
 
         Color c = hud_col(232.0f, 52.0f, 60.0f, 235.0f * alpha);
-        /* A short arc segment pointing inward. Arcs beat arrows here: an arrow needs to be
-         * read, an arc's position is perceived pre-attentively. */
+        /* 一小段指向中心的弧。這裡弧線勝過箭頭：箭頭需要被「讀懂」，而弧的位置是在前
+         * 注意力（pre-attentive）階段就被感知到的。 */
         float len = 12.0f;
         float ex = cx + sinf(a) * (r - len);
         float ey = cy - cosf(a) * (r - len);
         bp_ui_line(sx, sy, ex, ey, 2.0f, c);
 
-        /* widen perpendicular for a "bracket" look */
+        /* 垂直於半徑方向加寬，做出「括號」般的外觀 */
         float px = cosf(a) * 4.0f, py = sinf(a) * 4.0f;
         bp_ui_line(sx - px, sy - py, sx + px, sy + py, 2.0f, c);
     }
@@ -435,8 +432,8 @@ static void draw_damage_dirs(void)
 static void draw_hurt_vignette(void)
 {
     if (g_hud.hurt_vignette <= 0.01f) return;
-    /* Four edge gradients rather than a radial texture: no extra asset, no filter, and the
-     * banding is invisible at these alpha levels. */
+    /* 用四道邊緣漸層，而不是一張徑向貼圖：不必多一個素材、不必過濾，而且在這個透明度
+     * 層級下，色帶（banding）現象根本看不見。 */
     float a = BP_CLAMP(g_hud.hurt_vignette, 0.0f, 1.0f);
     Color clear = (Color){ 190, 20, 26, 0 };
     Color hot = hud_col(190.0f, 20.0f, 26.0f, 150.0f * a);
@@ -453,8 +450,8 @@ static void draw_low_health(void)
     float frac = g_player.health / BP_MAX(g_player.max_health, 1.0f);
     if (frac > 0.28f || g_player.health <= 0.0f) return;
 
-    /* Slow red pulse at the screen edge. Deliberately slow (1.6 Hz) and low alpha: a fast
-     * bright pulse is fatiguing within thirty seconds, and this can be on screen for minutes. */
+    /* 螢幕邊緣的緩慢紅色脈動。刻意放慢（1.6 Hz）並壓低透明度：又快又亮的脈動三十秒內
+     * 就會讓人疲勞，而這個效果可能一停在畫面上就是好幾分鐘。 */
     float pulse = 0.5f + 0.5f * sinf(g_hud.time * 1.6f * BP_TAU * 0.5f);
     float a = (1.0f - frac / 0.28f) * (0.25f + 0.45f * pulse);
     Color clear = (Color){ 200, 24, 32, 0 };
@@ -473,7 +470,7 @@ static void draw_toasts(void)
     {
         const bp_toast *t = &g_hud.toasts[i];
         float life = BP_CLAMP(t->age / t->life, 0.0f, 1.0f);
-        /* slide in from above, fade out at the end; no pop-in */
+        /* 從上方滑入、結尾淡出；不要突然彈出（pop-in） */
         float in = BP_CLAMP(t->age * 8.0f, 0.0f, 1.0f);
         float out = life > 0.72f ? 1.0f - (life - 0.72f) / 0.28f : 1.0f;
         float alpha = in * out;
@@ -503,8 +500,8 @@ static void draw_banner(void)
 {
     if (g_hud.banner_time <= 0.0f || !g_hud.banner[0]) return;
 
-    /* Slide-and-settle title. The banner is the one HUD element allowed to occupy the centre
-     * of the screen, because it only appears when the player is not being shot at. */
+    /* 滑入後定位的標題。橫幅是唯一獲准佔據畫面中央的 HUD 元素，因為它只會在玩家沒有
+     * 正在挨子彈的時候出現。 */
     float t = g_hud.banner_time;
     float in = BP_CLAMP((2.6f - t) * 5.0f, 0.0f, 1.0f);
     float out = BP_CLAMP(t / 0.5f, 0.0f, 1.0f);
@@ -526,8 +523,8 @@ static void draw_banner(void)
 
 static void draw_objective(void)
 {
-    /* One line, top-left, under the wave label. Never more than one line: if the objective
-     * needs two lines the level design is unclear and the HUD cannot fix it. */
+    /* 一行文字，左上角，位於波次標籤下方。永遠不超過一行：如果目標說明需要兩行，那代
+     * 表關卡設計本身沒講清楚，而 HUD 修不了這件事。 */
     const char *obj;
     if (g_waves.state == WAVE_COMPLETE) obj = g_player.exit_reached ? "EXTRACTION OPEN" : "REACH THE EXIT";
     else if (g_waves.state == WAVE_INTERMISSION) obj = "RESUPPLY -- NEXT WAVE INCOMING";
@@ -535,8 +532,8 @@ static void draw_objective(void)
 
     bp_ui_text(HUD_MARGIN, HUD_TOPBAR_H + 26.0f, UI_FS_TINY, g_assets.pal_text_dim, "%s", obj);
 
-    /* Exit direction marker once the level is clear: a chevron at the screen edge pointing at
-     * the exit trigger. Without it "reach the exit" becomes a scavenger hunt. */
+    /* 關卡清空之後的出口方向標記：螢幕邊緣一個指向出口觸發器的人字形（chevron）。少了
+     * 它，「走到出口」就會淪為一場尋寶遊戲。 */
     if (g_waves.state != WAVE_COMPLETE) return;
 
     Vector3 fwd = bp_camera_forward();
@@ -544,7 +541,7 @@ static void draw_objective(void)
     if (Vector3LengthSqr(fwd) < 1e-6f) return;
     fwd = Vector3Normalize(fwd);
 
-    /* find the exit trigger */
+    /* 找出出口觸發器 */
     bool found = false;
     Vector3 exitPos = { 0, 0, 0 };
     for (int i = 0; i < g_world.trigger_count; i++)
@@ -557,13 +554,13 @@ static void draw_objective(void)
     if (dist < 0.5f) return;
     to = Vector3Scale(to, 1.0f / dist);
 
-    /* signed angle from view forward: +right, -left */
+    /* 相對視線前方的帶號角（signed angle）：右為正、左為負 */
     float ang = atan2f(to.x * fwd.z - to.z * fwd.x, to.x * fwd.x + to.z * fwd.z);
     float cx = (float)UI_VW * 0.5f, cy = (float)UI_VH * 0.5f;
-    /* clamp the marker to a ring so it stays on screen even when the exit is behind us */
+    /* 把標記夾在一個環上，如此即使出口位於我們背後，標記也留在畫面內 */
     float r = 120.0f;
     float mx = cx + sinf(ang) * r;
-    float my = cy - cosf(ang) * r * 0.55f;      /* squash vertically: the screen is 16:9 */
+    float my = cy - cosf(ang) * r * 0.55f;      /* 垂直方向壓扁：螢幕是 16:9 */
 
     Color c = hud_col(92.0f, 226.0f, 196.0f, 220.0f);
     float pulse = 0.6f + 0.4f * sinf(g_hud.time * 4.0f);
@@ -594,8 +591,8 @@ static void draw_debug_overlay(void)
     ROW("SIM",        "%.2f ms",       g_engine.perf.sim_ms > 8.0f ? warn : g_assets.pal_text, (double)g_engine.perf.sim_ms);
     ROW("DRAW",       "%.2f ms",       g_engine.perf.draw_ms > 10.0f ? warn : g_assets.pal_text, (double)g_engine.perf.draw_ms);
     ROW("SIM STEPS",  "%d",            g_engine.perf.sim_steps > 3 ? warn : g_assets.pal_text, g_engine.perf.sim_steps);
-    /* Draw calls are not reported: raylib 5.5 publishes no counter, and an invented number
-     * on a debug overlay is worse than a missing one. */
+    /* 不回報 draw call 數量：raylib 5.5 沒有提供計數器，而在除錯覆蓋層上放一個憑空
+     * 捏造的數字，比缺少一個數字更糟。 */
     ROW("PARTICLES",  "%d",            g_fx.particle_live > MAX_PARTICLES * 3 / 4 ? warn : g_assets.pal_text, g_fx.particle_live);
     ROW("DECALS",     "%d",            g_assets.pal_text, g_fx.decal_live);
     ROW("ENEMIES",    "%d / %d",       g_enemies.alive_count > g_waves.max_onscreen ? warn : g_assets.pal_text,
@@ -606,14 +603,14 @@ static void draw_debug_overlay(void)
     ROW("QUALITY",    "%s",            g_assets.pal_text, bp_gfx_quality_name(g_gfx.quality));
     #undef ROW
 
-    /* pool pressure is the thing that actually breaks the game, so it gets its own line */
+    /* 池壓力才是真正會把遊戲弄壞的東西，所以讓它自佔一行 */
     bp_ui_text(x + 6.0f, ty, UI_FS_TINY, g_assets.pal_text_dim, "POOL");
     bp_ui_text(x + w - 6.0f, ty, UI_FS_TINY, g_assets.pal_text, "E%d P%d D%d",
                g_enemies.pool.count, g_fx.particle_live, g_fx.decal_live);
 }
 
 /* -------------------------------------------------------------------------------------- */
-/* frame                                                                                   */
+/* 每幀繪製                                                                                    */
 /* -------------------------------------------------------------------------------------- */
 void bp_hud_draw(void)
 {
@@ -633,7 +630,7 @@ void bp_hud_draw(void)
     }
     else
     {
-        /* Competitive minimal: health number, ammo number, crosshair. Nothing else. */
+        /* 競技用的最小化模式：血量數字、彈藥數字、準星，除此之外一無所有。 */
         float hpFrac = BP_CLAMP(g_hud.health / BP_MAX(g_player.max_health, 1.0f), 0.0f, 1.0f);
         bp_ui_text_shadow(HUD_MARGIN, (float)UI_VH - HUD_MARGIN - 22.0f, UI_FS_LARGE, UI_ALIGN_LEFT,
                           health_color(hpFrac), (Color){ 0, 0, 0, 200 }, "%d", (int)(g_hud.health + 0.5f));

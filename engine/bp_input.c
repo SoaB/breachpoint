@@ -8,7 +8,7 @@ bp_input g_input = { 0 };
 typedef struct { const char *name; int neg; int pos; int padAxis; float padSign; } bp_default_bind;
 
 /* -------------------------------------------------------------------------------------- */
-/* default keymap                                                                          */
+/* 預設鍵位映射                                                                              */
 /* -------------------------------------------------------------------------------------- */
 static void set_bind(bp_action a, const char *name, int k0, int k1, int k2,
                      int pad0, int pad1, int axis, float axisSign)
@@ -71,16 +71,15 @@ void bp_input_init(void)
 }
 
 /* -------------------------------------------------------------------------------------- */
-/* key polling                                                                             */
+/* 按鍵輪詢                                                                                  */
 /* -------------------------------------------------------------------------------------- */
 /*
- * Binding codes are polled through these three.
+ * 所有綁定代碼都透過下面這三個函式輪詢。
  *
- * The mouse test MUST be the bias check, not a numeric range. MouseButton is 0..6 and
- * KeyboardKey starts at 32, so "code >= MOUSE_BUTTON_LEFT" is true for every key on the
- * keyboard -- an earlier draft of this file therefore polled the arrow keys and both Ctrl
- * keys as mouse buttons, which silently broke crouch, jump and every menu binding. Codes
- * below BP_BIND_MOUSE_BASE are keys; at or above it they are mouse buttons.
+ * 滑鼠判定「必須」是偏移檢查（bias check），不能寫成數值區間。MouseButton 是 0..6，而
+ * KeyboardKey 從 32 開始，所以「code >= MOUSE_BUTTON_LEFT」對鍵盤上每一個按鍵都會成立 ——
+ * 本檔案較早的版本正是如此，把方向鍵與兩顆 Ctrl 鍵都當成滑鼠鍵在輪詢，結果悄悄地廢掉了蹲
+ * 下、跳躍與所有選單綁定。代碼小於 BP_BIND_MOUSE_BASE 者是鍵盤按鍵；等於或大於者才是滑鼠鍵。
  */
 static bool is_code_down(int code)
 {
@@ -110,8 +109,8 @@ void bp_input_begin_frame(void)
     g_input.mouse_pos = GetMousePosition();
     g_input.wheel = GetMouseWheelMove();
 
-    /* A focus loss must never leave the game thinking a key is still held -- this is the
-     * classic "player alt-tabs and comes back sprinting into a wall" bug. */
+    /* 失去焦點時，絕不能讓遊戲以為某個鍵還被按著 —— 這正是經典的「玩家 Alt-Tab 切走、切回
+     * 來之後一路 sprint 撞牆」缺陷。 */
     bool focused = IsWindowFocused();
     g_input.focus_lost_this_frame = (g_input.captured && !focused);
     if (g_input.focus_lost_this_frame) BP_LOGD("input: focus lost, releasing all actions");
@@ -171,7 +170,7 @@ void bp_input_end_frame(void)
 }
 
 bool bp_down(bp_action a)    { return a >= 0 && a < ACT_COUNT && g_input.act[a].held; }
-/* ---- virtual input ---- */
+/* ---- 虛擬輸入 ---- */
 static bool s_virtual[ACT_COUNT];
 static bool s_virtual_prev[ACT_COUNT];
 
@@ -210,7 +209,7 @@ static float axis_from_action(bp_action a)
     bp_binding *b = &g_input.act[a];
     float v = b->held ? 1.0f : 0.0f;
 
-    /* analogue gamepad contribution blends in on top of the digital value */
+    /* 手把的類比量貢獻會疊加在數位值之上，兩者取較大者 */
     if (g_input.gamepad_present && b->padAxis >= 0)
     {
         float g = GetGamepadAxisMovement(0, (GamepadAxis)b->padAxis) * b->padAxisSign;
@@ -235,7 +234,7 @@ float bp_input_look_dx(void) { return g_input.mouse_delta.x; }
 float bp_input_look_dy(void) { return g_input.mouse_delta.y * (g_input.invert_y ? -1.0f : 1.0f); }
 
 /* -------------------------------------------------------------------------------------- */
-/* capture                                                                                 */
+/* 滑鼠捕捉                                                                                  */
 /* -------------------------------------------------------------------------------------- */
 void bp_input_capture(bool enable)
 {
@@ -246,8 +245,8 @@ void bp_input_capture(bool enable)
     {
         DisableCursor();
 #if !defined(PLATFORM_WEB)
-        /* Only meaningful on desktop: keeps the OS from sending us a stray click on the
-         * window border the instant we capture. */
+        /* 只有桌機才有意義：避免我們剛開始捕捉的瞬間，作業系統就沿著視窗邊框塞給我們一次莫
+         * 名其妙的點擊。 */
         SetMouseOffset(0, 0);
 #endif
         BP_LOGD("input: mouse captured");
@@ -262,7 +261,7 @@ void bp_input_capture(bool enable)
 bool bp_input_is_captured(void) { return g_input.captured; }
 
 /* -------------------------------------------------------------------------------------- */
-/* rebinding                                                                               */
+/* 重新綁定                                                                                  */
 /* -------------------------------------------------------------------------------------- */
 bp_action bp_input_action_for_key(int key)
 {
@@ -278,7 +277,7 @@ bool bp_input_rebind(bp_action a, int slot, int key)
     if (a < 0 || a >= ACT_COUNT) return false;
     if (slot < 0 || slot >= BP_MAX_BINDS_PER_ACTION) return false;
 
-    /* Clear any other action using the same key so a bind is never ambiguous. */
+    /* 清掉其他用到同一按鍵的動作，讓任何一筆綁定都不會有歧義。 */
     if (key != 0)
     {
         for (int i = 0; i < ACT_COUNT; i++)
@@ -305,16 +304,15 @@ const char *bp_input_action_name(bp_action a)
 
 const char *bp_input_key_name(int key)
 {
-    /* raylib has no KeyCode->string, and shipping a 300-entry table for a rebinding screen
-     * is not worth the maintenance. The codes we actually allow players to bind are the
-     * letters, digits, function keys, arrows and modifiers -- so we map exactly those. */
+    /* raylib 沒有提供 KeyCode -> 字串的函式，而為了重綁畫面去維護一張 300 項的對照表根本不
+     * 划算。實際上我們只開放字母、數字、功能鍵、方向鍵與修飾鍵供玩家綁定 —— 所以這裡也只映
+     * 射那些按鍵，其餘代碼一律落到下方 switch 的 default 分支。 */
     static char buf[24];
 
     if (key == 0) return "--";
 
-    /* Mouse binds are stored biased (see BP_BIND_MOUSE_BASE), so they resolve here rather
-     * than in the switch below -- where their raw values would have collided with KEY_E and
-     * KEY_F, among others. */
+    /* 滑鼠綁定是以偏移值儲存的（見 BP_BIND_MOUSE_BASE），所以要在這裡先解析掉，而不是留給
+     * 下面的 switch —— 它們的原始數值會與 KEY_E、KEY_F 等按鍵撞在一起。 */
     if (BP_BIND_IS_MOUSE(key))
     {
         static const char *mb[] = { "MOUSE 1", "MOUSE 2", "MOUSE 3", "MOUSE 4",

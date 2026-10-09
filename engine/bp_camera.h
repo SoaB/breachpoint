@@ -1,18 +1,15 @@
 /******************************************************************************************
- * bp_camera.h -- first person camera: look, FOV kick, roll, shake, and the viewmodel rig.
+ * bp_camera.h -- 第一人稱攝影機：視角、FOV 踢動、翻滾（roll）、晃動與視圖模型（viewmodel）
+ *               機架。
  *
- * Separated from the player controller on purpose. The controller owns *where the body is*;
- * the camera owns *how the body is seen*. That split is what lets us add a spectator cam,
- * a death cam and a kill-cam replay later without touching movement code.
+ * 刻意與玩家控制器分開。控制器擁有的是「身體在哪裡」；攝影機擁有的是「身體被怎麼看」。正因為
+ * 有這層切割，日後才能加入觀戰攝影機、死亡攝影機與擊殺回放，而不必去動移動（movement）程式碼。
  *
- * Feel targets (these numbers are the whole game feel):
- *   - look is 1:1 with the mouse, no smoothing, no acceleration. Anything else and the game
- *     feels like it is fighting the player.
- *   - FOV expands with speed. Sprinting at 14 m/s adds ~9 degrees, which is what makes
- *     movement feel fast without needing a speedometer.
- *   - landing adds a downward pitch dip and a roll wobble; getting hit adds roll in the
- *     direction of the damage. Both are sub-2-degree and sub-100ms -- enough to be felt,
- *     not enough to be aimed through.
+ * 手感目標（這些數字就是整體遊戲手感）：
+ *   - 視角與滑鼠 1:1 對應，不做平滑、不做加速度。有任何偏離，遊戲就會像在跟玩家角力。
+ *   - FOV 隨速度展開。以 14 m/s 衝刺大約增加 9 度，這正是「不需要速度計也覺得很快」的來源。
+ *   - 落地時有向下的俯角下沉與翻滾擺動；中彈時則朝受傷方向翻滾。兩者都小於 2 度、短於 100
+ *     毫秒 —— 剛好能被感覺到，又不足以影響瞄準。
  ******************************************************************************************/
 #ifndef BP_CAMERA_H
 #define BP_CAMERA_H
@@ -23,31 +20,31 @@
 typedef struct {
     Camera3D cam;
 
-    float   yaw;            /* degrees */
-    float   pitch;          /* degrees, clamped */
+    float   yaw;            /* 度 */
+    float   pitch;          /* 度，已做夾限 */
     float   pitch_limit;
 
-    /* feel modifiers */
+    /* 手感調整參數  */
     float   fov_base;
     float   fov_current;
     float   fov_speed_kick;
-    float   roll;           /* degrees, applied around the view axis */
-    float   dip;            /* vertical offset for crouch/land/recoil */
-    float   recoil_pitch;   /* additive, recovers over time */
+    float   roll;           /* 度，繞視線（view axis）套用 */
+    float   dip;            /* 蹲下／落地／後座力造成的垂直位移 */
+    float   recoil_pitch;   /* 累加值，會隨時間回復 */
     float   recoil_yaw;
 
-    /* smoothing state */
+    /* 平滑狀態  */
     float   shake_roll;
     Vector3 shake_pos;
 
-    /* viewmodel rig: an offset camera space used by bp_weapons to draw the gun */
+    /* 視圖模型機架：一個偏移的攝影機座標空間，供 bp_weapons 繪製槍枝使用   */
     Vector3 vm_position;
-    Vector3 vm_rotation;    /* degrees */
+    Vector3 vm_rotation;    /* 度 */
     float   vm_bob;
     float   vm_sway;
     float   vm_recoil;
 
-    /* interpolated output used for rendering (simulation runs at 120 Hz, render at display Hz) */
+    /* 供繪製使用的插值輸出（模擬以 120 Hz 執行，繪製則依顯示器刷新率）                  */
     Vector3 render_position;
     float   render_yaw;
     float   render_pitch;
@@ -59,28 +56,28 @@ extern bp_camera g_camera;
 void    bp_camera_init(void);
 void    bp_camera_reset(Vector3 position);
 
-/* Feed raw mouse/touch look deltas. `sensitivity` is degrees per pixel-equivalent. */
+/* 喂入原始的滑鼠／觸控視角位移。`sensitivity` 的單位是「每像素相當量」的度數。 */
 void    bp_camera_look(float dx, float dy, float sensitivity);
 void    bp_camera_set_angles(float yaw, float pitch);
 
-/* Called from the fixed-step simulation. */
+/* 由固定步進模擬呼叫。 */
 void    bp_camera_simulate(float dt, Vector3 bodyPosition, float speed01, bool onGround,
                            bool crouched, float damageRoll);
 
-/* Called once per render frame to produce the interpolated Camera3D. */
+/* 每個繪製畫面呼叫一次，用來產出經過插值的 Camera3D。 */
 Camera3D bp_camera_render(float alpha);
 
 Vector3 bp_camera_forward(void);
 Vector3 bp_camera_right(void);
 Vector3 bp_camera_eye(void);
 
-/* Combat feedback */
+/* 戰鬥回饋 */
 void    bp_camera_add_recoil(float pitchAmount, float yawAmount);
 void    bp_camera_add_dip(float amount);
 void    bp_camera_add_roll(float amount);
 void    bp_camera_set_fov_base(float fov);
 
-/* Viewmodel helpers */
+/* 視圖模型輔助函式 */
 void    bp_camera_vm_update(float dt, float speed01, float recoil01, bool moving);
 Matrix  bp_camera_vm_matrix(void);
 

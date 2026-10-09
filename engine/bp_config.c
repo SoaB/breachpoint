@@ -5,7 +5,7 @@
 #include <ctype.h>
 
 /* -------------------------------------------------------------------------------------- */
-/* portable helpers (strcasecmp is POSIX, _stricmp is MSVC)                                */
+/* 可攜式輔助函式（strcasecmp 屬 POSIX，_stricmp 屬 MSVC）                                   */
 /* -------------------------------------------------------------------------------------- */
 static int ci_cmp(const char *a, const char *b)
 {
@@ -20,7 +20,7 @@ static int ci_cmp(const char *a, const char *b)
 }
 
 /* -------------------------------------------------------------------------------------- */
-/* line splitting                                                                          */
+/* 逐行切分                                                                                 */
 /* -------------------------------------------------------------------------------------- */
 static void split_lines(bp_config *cfg)
 {
@@ -31,7 +31,7 @@ static void split_lines(bp_config *cfg)
         int start = i;
         while (i < cfg->length && cfg->buffer[i] != '\n') i++;
         int end = i;
-        if (i < cfg->length) i++;                 /* skip '\n' */
+        if (i < cfg->length) i++;                 /* 略過 '\n' */
         while (end > start && (cfg->buffer[end - 1] == '\r')) end--;
         cfg->line_start[cfg->line_count] = start;
         cfg->line_len[cfg->line_count]   = end - start;
@@ -39,7 +39,7 @@ static void split_lines(bp_config *cfg)
     }
 }
 
-/* Get line `idx` as a NUL-terminated, whitespace/comment-stripped string. */
+/* 取出第 `idx` 行，傳回一條以 NUL 結尾、已去除 `#` 註解與前後空白的字串。 */
 static char *fetch_line(bp_config *cfg, int idx, char *out, int outSize)
 {
     out[0] = '\0';
@@ -63,7 +63,7 @@ static char *fetch_line(bp_config *cfg, int idx, char *out, int outSize)
 }
 
 /* -------------------------------------------------------------------------------------- */
-/* loading                                                                                 */
+/* 載入                                                                                    */
 /* -------------------------------------------------------------------------------------- */
 bool bp_config_load_mem(bp_config *cfg, const char *data, int length)
 {
@@ -111,7 +111,7 @@ bool bp_config_load(bp_config *cfg, const char *path)
 void bp_config_rewind(bp_config *cfg) { cfg->cursor = 0; }
 
 /* -------------------------------------------------------------------------------------- */
-/* section walking                                                                         */
+/* 區塊的走訪                                                                              */
 /* -------------------------------------------------------------------------------------- */
 static bool line_is_section(bp_config *cfg, int idx, char *type, char *id)
 {
@@ -119,7 +119,7 @@ static bool line_is_section(bp_config *cfg, int idx, char *type, char *id)
     fetch_line(cfg, idx, line, sizeof(line));
     if (!line[0]) return false;
 
-    /* "end" terminates, never starts */
+    /* "end" 只會終結區塊，絕不會開啟新區塊 */
     if (!ci_cmp(line, "end")) return false;
     if (strchr(line, '=')) return false;
 
@@ -202,7 +202,7 @@ bool bp_config_next_key(bp_config *cfg)
 }
 
 /* -------------------------------------------------------------------------------------- */
-/* typed getters                                                                           */
+/* 型別化取值函式                                                                           */
 /* -------------------------------------------------------------------------------------- */
 int bp_cfg_int(const bp_config *cfg, int fallback)
 {

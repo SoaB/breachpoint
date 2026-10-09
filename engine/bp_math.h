@@ -1,12 +1,11 @@
 /******************************************************************************************
- * bp_math.h -- collision, intersection and movement helpers used by physics + combat.
+ * bp_math.h -- 物理與戰鬥使用的碰撞、相交與移動輔助函式。
  *
- * The whole game is AABB-vs-AABB plus swept ray-vs-AABB. That is a deliberate choice:
- *   - it is branch-predictable and cache friendly (no BVH traversal, no mallocs)
- *   - it gives *exact* answers for axis aligned arena geometry, which is what a
- *     boomer-shooter map is made of
- *   - it behaves identically on desktop GL and WebGL, so hit registration never differs
- *     between platforms (critical: players must not be able to tell which build they are on)
+ * 整個遊戲的碰撞都是 AABB 對 AABB，再加上掃掠線段（swept ray）對 AABB。這是刻意的選擇：
+ *   - 分支可預測、快取友善（不遍歷 BVH，也不 malloc）
+ *   - 對軸對齊的競技場幾何給出「精確」答案，而 boomer-shooter 的地圖正是由這種幾何構成
+ *   - 在桌機 GL 與 WebGL 上行為完全一致，命中判定因此永遠不會因平台而異
+ *     （關鍵：玩家必須無法分辨自己正在玩的是哪一個版本）
  ******************************************************************************************/
 #ifndef BP_MATH_H
 #define BP_MATH_H
@@ -70,27 +69,25 @@ static inline bp_aabb bp_aabb_merge(const bp_aabb *a, const bp_aabb *b)
 }
 
 /* --------------------------------------------------------------------------------------
- * Ray vs AABB (slab method). Returns true on hit; `t` is the entry distance along `dir`,
- * `normal` is the surface normal of the entered face. `dir` must be normalised.
- * `t_max` limits the ray length.
+ * Ray vs AABB（slab 法）。命中回傳 true；`t` 是沿 `dir` 方向的進入距離，`normal` 是所進入
+ * 那一面的表面法線。`dir` 必須事先正規化（normalised），`t_max` 則限制線段的最大長度。
  * ------------------------------------------------------------------------------------ */
 bool bp_ray_aabb(Vector3 origin, Vector3 dir, const bp_aabb *box,
                  float t_max, float *out_t, Vector3 *out_normal);
 
-/* Shortest distance from a segment to a point -- used for explosion falloff & AI hearing. */
+/* 線段與一點之間的最短距離 —— 用於爆炸傷害衰減與 AI 的聽覺判定。 */
 float bp_segment_point_distance(Vector3 a, Vector3 b, Vector3 p);
 
 /* --------------------------------------------------------------------------------------
- * Cylinder-vs-AABB overlap test used for character bodies (we model characters as a
- * vertical capsule approximated by an AABB, which keeps resolution cheap and stable).
+ * 角色身體使用的「圓柱體 vs AABB」重疊測試（我們把角色建成一個以 AABB 近似的垂直膠囊，
+ * 如此一來解算（resolution）既便宜又穩定）。
  * ------------------------------------------------------------------------------------ */
 bool bp_body_overlaps_box(Vector3 center, float radius, float height, const bp_aabb *box);
 
-/* Horizontal-only resolution: push `center` out of `box` along the axis of least
- * penetration. Returns true if a correction was applied. */
+/* 只在水平面解算：沿穿透最淺的那一條軸把 `center` 推出 `box`。若確實施加了修正則回傳 true。 */
 bool bp_resolve_body_box(Vector3 *center, float radius, float height, const bp_aabb *box);
 
-/* Utility: build a forward vector from yaw/pitch in degrees (raylib camera convention). */
+/* 工具函式：由 yaw／pitch（單位為度）建立前向量（raylib 攝影機慣例）。 */
 static inline Vector3 bp_forward_from_angles(float yawDeg, float pitchDeg)
 {
     float cp = cosf(pitchDeg * BP_DEG2RAD);

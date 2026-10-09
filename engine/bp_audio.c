@@ -1,23 +1,22 @@
 /******************************************************************************************
- * bp_audio.c -- procedural DSP: one-shot SFX bank + a live dynamic-music synthesiser.
+ * bp_audio.c -- 程序化 DSP：一次性音效（one-shot）音效庫，加上即時的動態音樂合成器。
  *
- * The music is generated *inside raylib's audio-thread callback*, so the soundtrack reacts
- * to gameplay with zero latency and zero downloaded assets. The game thread publishes four
- * layer weights (pad / bass / drums / lead) every frame; the audio thread smooths them and
- * mixes accordingly. Because the transport never stops, entering combat is a *fade*, not a
- * seek -- no musical seam, which is the most common flaw in dynamic game audio.
+ * 音樂是在「raylib 的音訊執行緒 callback 內部」生成的，因此配樂對玩法的反應延遲為零，也
+ * 不需要下載任何資產。遊戲執行緒每幀發布四個圖層權重（pad / bass / drums / lead），音訊執
+ * 行緒對它們做平滑，再依權重混音。因為走帶（transport）從不停止，進入戰鬥是一次「淡入
+ * （fade）」而非跳躍（seek）—— 沒有音樂接縫，而接縫正是動態遊戲音訊最常見的缺陷。
  ******************************************************************************************/
 #include "bp_audio.h"
 
 bp_audio_sys g_audio = { 0 };
 
 /* ====================================================================================== */
-/* 0. constants                                                                            */
+/* 0. 常數                                                                                   */
 /* ====================================================================================== */
 #define SFX_SAMPLE_RATE   44100
 #define SFX_MAX_SECONDS   2.5f
 #define SFX_SCRATCH       ((int)(SFX_SAMPLE_RATE * SFX_MAX_SECONDS))
-#define SFX_VOICES_PER_ID 3            /* alias pool: rapid fire must not cut itself off  */
+#define SFX_VOICES_PER_ID 3            /* 重疊聲音池（alias pool）：連射時不能自斷其聲  */
 
 typedef struct {
     Sound  voices[SFX_VOICES_PER_ID];
@@ -26,10 +25,10 @@ typedef struct {
 } bp_sfx_bank;
 
 static bp_sfx_bank s_bank[SFX_COUNT];
-static float      *s_scratch = NULL;   /* alive only during init */
+static float      *s_scratch = NULL;   /* 只在初始化期間存活 */
 
 /* ====================================================================================== */
-/* 1. DSP primitives                                                                       */
+/* 1. DSP 基本元件                                                                           */
 /* ====================================================================================== */
 typedef struct { float lp; } bp_onepole;
 
@@ -50,7 +49,7 @@ static inline float dsp_env_perc(float t, float attack, float decay)
     float d = t - attack;
     if (d > decay) return 0.0f;
     float x = d / decay;
-    return (1.0f - x) * (1.0f - x);          /* squared ramp ~ natural acoustic decay */
+    return (1.0f - x) * (1.0f - x);          /* 平方斜坡 —— 近似自然的聲學衰減 */
 }
 
 static inline float dsp_env_ad(float t, float attack, float decay)
@@ -78,7 +77,7 @@ static inline float dsp_highpass(bp_onepole *s, float in, float cutoffHz, float 
 static inline float dsp_saturate(float x, float drive)
 {
     float y = x * drive;
-    return y / (1.0f + BP_ABS(y));           /* cheap tanh-like soft clip */
+    return y / (1.0f + BP_ABS(y));           /* 廉價的類 tanh 軟性削波（soft clip） */
 }
 
 static void dsp_mix_at(float *dst, int dstLen, int offset, const float *src, int srcLen, float vol)
@@ -90,11 +89,11 @@ static void dsp_mix_at(float *dst, int dstLen, int offset, const float *src, int
 }
 
 /* ====================================================================================== */
-/* 2. instrument generators                                                                */
+/* 2. 樂器產生器                                                                             */
 /* ====================================================================================== */
 
-/* Gunshot core: noise burst through a downward-sweeping band, a transient "crack", and a
- * low sine thump for weight. Every weapon in the bank is a parameterisation of this. */
+/* 槍聲核心：噪聲穿過向下掃頻的頻帶、加上瞬態的「爆裂聲（crack）」，以及用來添重量的低頻
+ * 正弦撞擊（thump）。音效庫中每一把武器都是這一套的不同參數化（parameterisation）。 */
 static void gen_gunshot(float *buf, int len, float sr,
                         float bodyStartHz, float bodyEndHz, float bodyLen,
                         float crackHz, float crackLen,
@@ -160,7 +159,7 @@ static void gen_explosion(float *buf, int len, float sr, float size)
             pSub += 72.0f * (1.0f - 0.7f * t / 0.30f) * dt;
             v += sinf(2.0f * BP_PI * pSub) * env * (0.95f + 0.5f * size);
         }
-        if (t > 0.14f && t < dur + 0.45f)      /* debris tail */
+        if (t > 0.14f && t < dur + 0.45f)      /* 碎屑尾音 */
         {
             float k = (t - 0.14f) / (dur + 0.31f);
             v += dsp_noise() * (1.0f - BP_CLAMP(k, 0.0f, 1.0f)) * 0.055f;
@@ -169,7 +168,7 @@ static void gen_explosion(float *buf, int len, float sr, float size)
     }
 }
 
-/* waveType: 0 sine, 1 square, 2 saw, 3 triangle */
+/* waveType：0 正弦波、1 方波、2 鋸齒波、3 三角波 */
 static void gen_tone(float *buf, int len, float sr, float f0, float f1,
                      float vol, int waveType, float attack, float decay)
 {
@@ -214,8 +213,8 @@ static void gen_noise(float *buf, int len, float sr, float cutoffHz, float vol,
     }
 }
 
-/* Creature voice: detuned saw pair through a downward-sweeping low pass, tremolo'd for a
- * "throat" quality, then saturated. */
+/* 生物叫聲：一對互差頻（detuned）的鋸齒波穿過向下掃頻的低通，再以顫音（tremolo）做出
+ * 「喉嚨」般的質感，最後送進飽和器。 */
 static void gen_growl(float *buf, int len, float sr, float baseHz, float dur, float vol, float sweep)
 {
     bp_onepole lp = { 0 };
@@ -252,7 +251,7 @@ static void normalise(float *buf, int len, float peak)
 }
 
 /* ====================================================================================== */
-/* 3. SFX recipes                                                                          */
+/* 3. 音效配方（recipe）                                                                     */
 /* ====================================================================================== */
 #define GEN(name) static void name(float *buf, int len, float sr)
 
@@ -411,18 +410,18 @@ const char *bp_audio_sfx_name(bp_sfx_id id)
 }
 
 /* ====================================================================================== */
-/* 4. dynamic music synthesiser -- runs on raylib's audio thread                           */
+/* 4. 動態音樂合成器（跑在 raylib 音訊執行緒上）                                             */
 /* ====================================================================================== */
 #define MUSIC_SR          SFX_SAMPLE_RATE
 #define MUSIC_BPM         180.0f
 #define MUSIC_STEPS_BAR   16
 #define MUSIC_BARS        4
 #define MUSIC_LOOP_STEPS  (MUSIC_STEPS_BAR * MUSIC_BARS)
-#define MUSIC_STEP_SEC    (60.0f / MUSIC_BPM / 4.0f)      /* one 16th note */
+#define MUSIC_STEP_SEC    (60.0f / MUSIC_BPM / 4.0f)      /* 一個十六分音符的長度 */
 
 typedef struct {
     float phase;
-    float freq;      /* latched at trigger time -- never re-read from the pattern */
+    float freq;      /* 觸發瞬間就鎖存（latch），之後絕不再回頭讀 pattern */
     float amp;
     float cutoff;
     float lp;
@@ -433,8 +432,8 @@ typedef struct {
 } music_voice;
 
 typedef struct {
-    /* published by the game thread; read by the audio thread. Plain floats: a torn read
-     * can only cause one sample of slightly wrong gain, which is inaudible. */
+    /* 由遊戲執行緒發布、音訊執行緒讀取。刻意使用一般 float：就算發生撕裂讀取
+     * （torn read），也只會讓某一個取樣的增益稍微不對，完全聽不出來。 */
     volatile float w_drums;
     volatile float w_bass;
     volatile float w_lead;
@@ -442,7 +441,7 @@ typedef struct {
     volatile float gain;
     volatile bool  running;
 
-    /* audio-thread private */
+    /* 音訊執行緒私有 */
     double sample_pos;
     float  step_phase;
     int    step;
@@ -450,7 +449,7 @@ typedef struct {
     music_voice kick, snare, hat, bass;
     music_voice lead[3], pad[3];
 
-    /* smoothed weights (audio thread) */
+    /* 平滑後的權重（只由音訊執行緒讀寫） */
     float sD, sB, sL, sP;
     uint32_t rng;
 } music_synth;
@@ -460,7 +459,7 @@ static music_synth s_music = {
     .gain = 0.9f, .running = false, .rng = 0xC0FFEEu
 };
 
-/* E natural minor, 16 sixteenth steps per bar, 4 bars. 0 = rest, else MIDI note. */
+/* E 自然小調，每小節 16 個十六分音符步進，共 4 小節。0 = 休止，其餘為 MIDI 音高。 */
 static const int s_bass_pat[MUSIC_LOOP_STEPS] = {
     40, 0, 40, 0,  40, 0, 47, 0,  40, 0, 40, 0,  52, 0, 47, 0,
     36, 0, 36, 0,  36, 0, 43, 0,  36, 0, 36, 0,  48, 0, 43, 0,
@@ -476,13 +475,13 @@ static const int s_lead_pat[MUSIC_LOOP_STEPS] = {
 };
 
 static const int s_pad_chords[MUSIC_BARS][3] = {
-    { 52, 55, 59 },   /* Em */
-    { 48, 52, 55 },   /* C  */
-    { 50, 54, 57 },   /* D  */
-    { 47, 50, 54 },   /* Bm */
+    { 52, 55, 59 },   /* Em：E 小調 */
+    { 48, 52, 55 },   /* C：C 大調 */
+    { 50, 54, 57 },   /* D：D 大調 */
+    { 47, 50, 54 },   /* Bm：B 小調 */
 };
 
-/* bitmask per 16th: 1 kick, 2 snare, 4 hat */
+/* 每個十六分音符的位元旗標：1 = kick，2 = snare，4 = hat */
 static const int s_drum_pat[MUSIC_LOOP_STEPS] = {
     5,0,4,0, 5,0,4,2, 4,0,5,0, 4,0,6,4,
     5,0,4,0, 5,0,4,2, 4,0,5,0, 4,4,6,6,
@@ -542,13 +541,13 @@ static void music_sequencer_tick(void)
     s_music.step = (step + 1) % MUSIC_LOOP_STEPS;
 }
 
-/* Render `frames` stereo float samples. Called from the audio thread only. */
+/* 渲染 `frames` 個立體聲 float 取樣。只能從音訊執行緒呼叫。 */
 static void music_callback(void *bufferData, unsigned int frames)
 {
     float *out = (float *)bufferData;
     const float dt = 1.0f / (float)MUSIC_SR;
 
-    /* Smooth the published weights on the audio thread so fades never click. */
+    /* 在音訊執行緒上平滑這些發布過來的權重，淡入淡出才不會爆出 click 雜音。 */
     const float k = 0.02f;
     s_music.sD += ((float)s_music.w_drums - s_music.sD) * k;
     s_music.sB += ((float)s_music.w_bass  - s_music.sB) * k;
@@ -575,7 +574,7 @@ static void music_callback(void *bufferData, unsigned int frames)
 
         float dL = 0.0f, dR = 0.0f, bS = 0.0f, lL = 0.0f, lR = 0.0f, pL = 0.0f, pR = 0.0f;
 
-        /* --- kick: pitch-dropping sine, lightly saturated --- */
+        /* --- kick：音高下滑的正弦波，再做輕度飽和 --- */
         if (s_music.kick.active)
         {
             music_voice *v = &s_music.kick;
@@ -590,7 +589,7 @@ static void music_callback(void *bufferData, unsigned int frames)
                 dL += s; dR += s;
             }
         }
-        /* --- snare: noise + tuned body --- */
+        /* --- snare：噪聲 ＋ 調過音高的鼓身 --- */
         if (s_music.snare.active)
         {
             music_voice *v = &s_music.snare;
@@ -605,7 +604,7 @@ static void music_callback(void *bufferData, unsigned int frames)
                 dL += s; dR += s;
             }
         }
-        /* --- hat: high-passed noise click, slightly right-biased --- */
+        /* --- hat：高通後的噪聲敲擊，聲像略偏右 --- */
         if (s_music.hat.active)
         {
             music_voice *v = &s_music.hat;
@@ -619,7 +618,7 @@ static void music_callback(void *bufferData, unsigned int frames)
                 dL += s * 0.75f; dR += s;
             }
         }
-        /* --- bass: saturated saw+square through a low pass --- */
+        /* --- bass：飽和的鋸齒＋方波穿過低通 --- */
         if (s_music.bass.active)
         {
             music_voice *v = &s_music.bass;
@@ -635,7 +634,7 @@ static void music_callback(void *bufferData, unsigned int frames)
                 bS += s * v->amp * (0.20f + 0.80f * expf(-3.4f * v->age));
             }
         }
-        /* --- lead: 3 detuned voices, hard-panned for width --- */
+        /* --- lead：3 個互差頻的 voice，用硬聲像拉出寬度 --- */
         for (int i = 0; i < 3; i++)
         {
             music_voice *v = &s_music.lead[i];
@@ -653,7 +652,7 @@ static void music_callback(void *bufferData, unsigned int frames)
             lL += s * env * (1.0f - pan);
             lR += s * env * pan;
         }
-        /* --- pad: slow triangle chord, drifting pan --- */
+        /* --- pad：緩慢的三角波和弦，聲像緩緩飄移 --- */
         for (int i = 0; i < 3; i++)
         {
             music_voice *v = &s_music.pad[i];
@@ -684,7 +683,7 @@ static void music_callback(void *bufferData, unsigned int frames)
 }
 
 /* ====================================================================================== */
-/* 5. init / shutdown                                                                      */
+/* 5. 初始化／關閉                                                                           */
 /* ====================================================================================== */
 static int16_t *scratch_to_pcm(int frames)
 {
@@ -746,7 +745,7 @@ void bp_audio_init(void)
         for (int v = 0; v < SFX_VOICES_PER_ID; v++) b->last_used[v] = -1e9;
         b->loaded = true;
 
-        UnloadWave(w);   /* LoadSoundFromWave copied + format-converted the samples; UnloadWave frees w.data (pcm) */
+        UnloadWave(w);   /* LoadSoundFromWave 已複製並轉換過格式；UnloadWave 負責釋放 w.data（pcm） */
 
         g_audio.sfx[i].valid       = true;
         g_audio.sfx[i].sound       = b->voices[0];
@@ -761,7 +760,7 @@ void bp_audio_init(void)
     free(s_scratch);
     s_scratch = NULL;
 
-    /* ---- dynamic music stream ---- */
+    /* ---- 動態音樂串流 ---- */
     AudioStream stream = LoadAudioStream(MUSIC_SR, 32, 2);
     if (stream.buffer)
     {
@@ -808,7 +807,7 @@ void bp_audio_shutdown(void)
 }
 
 /* ====================================================================================== */
-/* 6. playback                                                                             */
+/* 6. 播放                                                                                   */
 /* ====================================================================================== */
 static float rand01(void)
 {
@@ -821,7 +820,7 @@ static void play_voice(bp_sfx_id id, float volume, float pitch, float pan)
     bp_sfx_bank *b = &s_bank[id];
     if (!b->loaded) return;
 
-    /* Choose the alias that has been silent longest so a machine gun never self-cancels. */
+    /* 挑選靜音最久的那個 alias，機槍連射才不會把自己截斷。 */
     int best = 0;
     double now = GetTime();
     for (int v = 1; v < SFX_VOICES_PER_ID; v++)
@@ -865,8 +864,8 @@ void bp_audio_play_variant(bp_sfx_id id, Vector3 position, Vector3 listenerPos,
     float falloff = r->falloff > 0.0f ? r->falloff : 60.0f;
     if (dist > falloff) return;
 
-    /* Inverse distance with a soft knee (no blow-out at zero distance) times a linear
-     * fade to the falloff radius, so sounds never pop out of existence. */
+    /* 反比距離衰減（在零距離處有軟膝蓋，不會瞬間爆音），再乘上朝 falloff 半徑線性淡出的
+     * 因子，因此聲音永遠是漸弱到消失，而不是「啵」一聲憑空不見。 */
     float atten = (1.0f / (1.0f + 0.35f * dist)) * (1.0f - dist / falloff);
     atten = BP_CLAMP(atten, 0.0f, 1.0f);
 
@@ -899,7 +898,7 @@ void bp_audio_play_at(bp_sfx_id id, Vector3 position, Vector3 listenerPos,
 }
 
 /* ====================================================================================== */
-/* 7. per-frame                                                                            */
+/* 7. 逐幀更新                                                                               */
 /* ====================================================================================== */
 void bp_audio_set_intensity(float target01, float dt)
 {
@@ -909,11 +908,11 @@ void bp_audio_set_intensity(float target01, float dt)
     g_audio.intensity = bp_damp(g_audio.intensity, target01, 1.6f, BP_MAX(dt, 0.0001f));
     float i = g_audio.intensity;
 
-    /* Layer map:
-     *   0.00-0.15  menu / exploration -> pad only
-     *   0.15-0.40  tension            -> + bass
-     *   0.40-0.65  combat             -> + drums
-     *   0.68-0.93  peak               -> + lead
+    /* 圖層對照表：
+     *   0.00-0.15  選單／探索          -> 只有 pad
+     *   0.15-0.40  張力累積            -> 加上 bass
+     *   0.40-0.65  戰鬥                -> 加上 drums
+     *   0.68-0.93  最高潮              -> 加上 lead
      */
     s_music.w_pad   = 1.0f;
     s_music.w_bass  = BP_CLAMP((i - 0.12f) / 0.25f, 0.0f, 1.0f);
@@ -933,6 +932,6 @@ void bp_audio_update(float dt)
 {
     BP_UNUSED(dt);
     if (!g_audio.initialised) return;
-    /* Telemetry decays so the debug overlay shows a live-ish voice count. */
+    /* 遙測數值持續衰減，好讓除錯疊層顯示出接近即時的 voice 數量。 */
     g_audio.active_voices = (int)((float)g_audio.active_voices * 0.80f);
 }

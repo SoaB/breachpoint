@@ -1,21 +1,21 @@
 /******************************************************************************************
- * bp_assets.c -- procedural texture, model and font generation.
+ * bp_assets.c -- 程序化（procedural）貼圖、模型與字型產生。
  *
- * Everything here runs once at boot. Target budget: < 400 ms on a 2015-era laptop, < 900 ms
- * in the Web build. The generated atlas totals ~2.4 MB of VRAM at 256px per architectural
- * texture, which is what makes the game shipable on integrated graphics and mid-tier phones.
+ * 這裡的一切都只在開機時執行一次。目標預算：2015 年等級的筆電上小於 400 ms，Web 版小於
+ * 900 ms。產生出來的圖集（atlas）以每張 256px 的建築材質計算，總共約佔 2.4 MB VRAM ——
+ * 正是這一點讓遊戲能在內顯與中階手機上順利出貨。
  *
- * Layering convention for every surface texture:
- *      base colour  *  large-scale value noise (dirt)  *  fine noise (grain)  +  edge bevel
- *   Keeping that recipe identical across all surfaces is what makes the world feel like it
- *   was authored by one art director rather than assembled from free assets.
+ * 每一張表面貼圖都遵循同一套分層慣例：
+ *      底色  *  大尺度 value noise（污漬）  *  細部 noise（顆粒）  +  邊緣斜角（bevel）
+ *   所有表面都維持同一份配方，正是讓這個世界感覺「出自同一位美術總監之手」，而不是拿免費
+ *   素材拼湊起來的原因。
  ******************************************************************************************/
 #include "bp_assets.h"
 
 bp_assets g_assets = { 0 };
 
 /* ====================================================================================== */
-/* 0. noise                                                                                */
+/* 0. 雜訊（noise）                                                                      */
 /* ====================================================================================== */
 static inline uint32_t hash2i(int x, int y, uint32_t seed)
 {
@@ -38,7 +38,7 @@ static float fbm(int x, int y, int size, int octaves, uint32_t seed)
     for (int o = 0; o < octaves; o++)
     {
         if (period < 2) break;
-        /* sample the lattice at this octave's resolution */
+        /* 以本八度（octave）的解析度去取樣格點 */
         float sx = (float)x * (float)period / (float)size;
         float sy = (float)y * (float)period / (float)size;
         int ix = (int)floorf(sx), iy = (int)floorf(sy);
@@ -63,7 +63,7 @@ static float fbm(int x, int y, int size, int octaves, uint32_t seed)
 }
 
 /* ====================================================================================== */
-/* 1. image helpers                                                                        */
+/* 1. 影像輔助函式                                                                         */
 /* ====================================================================================== */
 typedef struct { Color *px; int w, h; } bp_img;
 
@@ -122,31 +122,30 @@ static Texture2D img_to_texture(bp_img *im, bool mips)
     if (mips) ImageMipmaps(&img);
     Texture2D t = LoadTextureFromImage(img);
 
-    /* Architectural surfaces are viewed at glancing angles and minified hard; trilinear
-     * + anisotropy removes the "shimmering bricks" artefact that instantly reads as cheap. */
+    /* 建築表面常以掠射角（glancing angle）觀看，而且縮小得很厲害；trilinear 過濾加上異向性
+     * （anisotropy）能消除那種一眼就讓人覺得廉價的「磚塊閃爍」現象。 */
     if (t.id)
     {
-        /* Anisotropic 4x is the sweet spot: it kills the "shimmering bricks" artefact on
-         * walls seen at glancing angles and costs almost nothing on any GPU since 2010. */
+        /* 異向性 4x 是最佳平衡點：它消除掠射角牆面上的「磚塊閃爍」，而且自 2010 年以來的
+         * 任何 GPU 上都幾乎不花成本。 */
         SetTextureFilter(t, mips ? TEXTURE_FILTER_ANISOTROPIC_4X : TEXTURE_FILTER_POINT);
         SetTextureWrap(t, TEXTURE_WRAP_REPEAT);
     }
 
-    /* UnloadImage would free img.data (our pixel array), so only free the mip chain that
-     * ImageMipmaps allocated. */
+    /* UnloadImage 會連同 img.data（我們的像素陣列）一起釋放，所以這裡只釋放 ImageMipmaps
+     * 所配置的 mip chain。 */
     UnloadImage(img);
     im->px = NULL;
     return t;
 }
 
 /* ====================================================================================== */
-/* 2. texture generators                                                                   */
+/* 2. 貼圖產生器                                                                           */
 /* ====================================================================================== */
 #define TEX_ARCH_SIZE 256
 #define TEX_SMALL_SIZE 128
 
-/* Shared surface recipe. `grain` adds high-frequency speckle so flat colours never look
- * like vector art. */
+/* 所有表面共用的配方。`grain` 會加入高頻斑點，讓純色區域永遠不會看起來像向量插畫。 */
 static void surface_pass(bp_img *im, uint32_t seed, float dirtAmt, float grainAmt)
 {
     for (int y = 0; y < im->h; y++)
@@ -181,13 +180,13 @@ static void tex_brick(bp_img *im)
             bool isMortar = (lx < mortar) || (ly < mortar);
             if (isMortar) { img_set(im, x, y, mort); continue; }
 
-            /* per-brick colour variance keyed by brick id, not pixel -> bricks read as
-             * discrete objects instead of a noisy field */
+            /* 每塊磚的色差以「磚的 id」而非像素為索引取樣 -> 磚讀起來才會是一個個離散的物件，
+             * 而不是一片噪點 */
             int bx = (x + offset) / bw, by = y / bh;
             float v = hashf2(bx, by, 99u);
             float shade = 0.72f + v * 0.55f;
 
-            /* bevel: brighter top-left, darker bottom-right */
+            /* 斜角：左上打亮、右下壓暗 */
             float bev = 1.0f;
             if (ly == mortar) bev = 1.22f;
             else if (ly == mortar + 1) bev = 1.10f;
@@ -196,7 +195,7 @@ static void tex_brick(bp_img *im)
             if (lx == mortar) bev *= 1.16f;
             else if (lx == bw - 1) bev *= 0.78f;
 
-            /* chip damage on some bricks */
+            /* 少數磚塊的崩角損傷 */
             float n = fbm(x, y, 64, 3, 7u + (uint32_t)(bx * 31 + by * 17));
             if (v > 0.86f && n > 0.62f) shade *= 0.55f;
 
@@ -216,11 +215,11 @@ static void tex_metal(bp_img *im, Color base, float panelScale, bool rivets)
             int px = x % ps, py = y % ps;
             float shade = 1.0f;
 
-            /* brushed grain: streaks along X */
+            /* 拉絲紋理：沿 X 方向的條紋 */
             float streak = hashf2(x / 3, y, 5u);
             shade *= 0.94f + streak * 0.12f;
 
-            /* panel seam */
+            /* 鈑件接縫 */
             bool seam = (px < 2) || (py < 2);
             if (seam) shade *= 0.45f;
             else if (px < 4 || py < 4) shade *= 0.78f;
@@ -255,13 +254,13 @@ static void tex_concrete(bp_img *im, Color base, float crackiness)
             float n2 = fbm(x * 2, y * 2, im->w * 2, 3, 71u);
             float shade = 0.78f + n1 * 0.42f + (n2 - 0.5f) * 0.10f;
 
-            /* stains pooling toward the bottom of the tile */
+            /* 汙漬往貼圖下半部積聚 */
             float stain = fbm(x / 2, y / 2, im->w / 2, 3, 131u);
             if (stain > 0.62f) shade *= 0.72f;
 
             Color c = rgbm(base.r, base.g, base.b, shade);
 
-            /* cracks: ridged noise -> thin dark lines */
+            /* 裂縫：脊狀（ridged）noise -> 細長的暗線 */
             float ridge = 1.0f - BP_ABS(fbm(x, y, im->w, 4, 191u) * 2.0f - 1.0f);
             if (ridge > (1.0f - 0.06f * crackiness)) c = mixc(c, (Color){ 22, 20, 20, 255 }, 0.75f);
 
@@ -281,7 +280,7 @@ static void tex_panel(bp_img *im, Color base, Color accent)
             int px = x % cell, py = y % cell;
             float shade = 1.0f;
 
-            /* recessed panel with a chamfer */
+            /* 帶斜面（chamfer）的內凹鈑件 */
             int d = BP_MIN(BP_MIN(px, cell - 1 - px), BP_MIN(py, cell - 1 - py));
             if (d < 3) shade = 0.42f + (float)d * 0.10f;
             else if (d < 7) shade = 0.86f + (float)(d - 3) * 0.035f;
@@ -289,10 +288,10 @@ static void tex_panel(bp_img *im, Color base, Color accent)
 
             Color c = rgbm(base.r, base.g, base.b, shade);
 
-            /* hazard stripe inset */
+            /* 內嵌的警示條紋 */
             if (d > 18 && d < 26 && ((px + py) / 8) % 2 == 0) c = mixc(c, accent, 0.55f);
 
-            /* bolt heads */
+            /* 螺栓頭 */
             int bxd = px - 16, byd = py - 16;
             if (bxd * bxd + byd * byd <= 16) c = mixc(c, (Color){ 200, 205, 210, 255 }, 0.5f);
             bxd = px - (cell - 16); byd = py - (cell - 16);
@@ -315,13 +314,13 @@ static void tex_rusty(bp_img *im)
         for (int x = 0; x < im->w; x++)
         {
             float r = fbm(x, y, im->w, 5, 211u);
-            float streak = fbm(x, y / 4, im->w, 3, 271u);   /* vertical run-off */
+            float streak = fbm(x, y / 4, im->w, 3, 271u);   /* 垂直流掛痕 */
             float t = BP_CLAMP((r - 0.42f) * 2.4f + (streak - 0.5f) * 0.9f, 0.0f, 1.0f);
 
             Color c = mixc(steel, rust, t);
             if (t > 0.72f) c = mixc(c, rust2, (t - 0.72f) * 2.2f);
 
-            /* pitting */
+            /* 鏽坑（pitting） */
             float pit = fbm(x * 3, y * 3, im->w * 3, 2, 331u);
             if (pit > 0.74f && t > 0.3f) c = rgbm(c.r, c.g, c.b, 0.62f);
 
@@ -339,7 +338,7 @@ static void tex_grate(bp_img *im, Color base)
         for (int x = 0; x < im->w; x++)
         {
             int px = x % cell, py = y % cell;
-            /* diamond mesh: bars where the Manhattan distance to the cell centre is small */
+            /* 菱形網格：到格心的曼哈頓距離夠小的地方畫成網條 */
             int dx = BP_ABS(px - cell / 2), dy = BP_ABS(py - cell / 2);
             bool bar = (dx + dy) < 9 || (dx < 3) || (dy < 3);
             Color c;
@@ -349,7 +348,7 @@ static void tex_grate(bp_img *im, Color base)
                 if (dx < 3 || dy < 3) bev = 1.05f;
                 c = rgbm(base.r, base.g, base.b, bev);
             }
-            else c = (Color){ 12, 12, 15, 255 };     /* void beneath the grate */
+            else c = (Color){ 12, 12, 15, 255 };     /* 鐵格板下方的空洞 */
             img_set(im, x, y, c);
         }
     }
@@ -374,7 +373,7 @@ static void tex_tile(bp_img *im, Color base, Color grout, int tileSize)
             if (px == 2) shade *= 1.06f;
             if (px == tileSize - 1) shade *= 0.85f;
 
-            /* scuff marks concentrated in tile centres (foot traffic) */
+            /* 磨痕集中在磚面中央（人踩出來的） */
             float scuff = fbm(x, y, 64, 3, 409u);
             if (scuff > 0.66f) shade *= 0.86f;
 
@@ -397,7 +396,7 @@ static void tex_hazard(bp_img *im)
             Color c = s ? yellow : black;
             float n = fbm(x, y, 128, 4, 503u);
             float shade = 0.82f + n * 0.36f;
-            /* worn patches where the paint has been scuffed off */
+            /* 油漆被磨掉的磨損區塊 */
             if (n > 0.68f) c = mixc(c, (Color){ 74, 70, 66, 255 }, 0.6f);
             img_set(im, x, y, rgbm(c.r, c.g, c.b, shade));
         }
@@ -419,11 +418,11 @@ static void tex_ceiling(bp_img *im)
             if (d < 2) shade = 0.40f;
             else if (d < 5) shade = 0.66f;
 
-            /* acoustic dots */
+            /* 吸音圓點 */
             float dots = fbm(x * 2, y * 2, 128, 2, 601u);
             if (dots > 0.60f) shade *= 0.86f;
 
-            /* water damage blooms */
+            /* 水傷擴散出的漬斑 */
             float bloom = fbm(x / 2, y / 2, 128, 3, 607u);
             Color c = rgbm(base.r, base.g, base.b, shade);
             if (bloom > 0.66f) c = mixc(c, (Color){ 88, 74, 48, 255 }, (bloom - 0.66f) * 1.6f);
@@ -435,7 +434,7 @@ static void tex_ceiling(bp_img *im)
 
 static void tex_trim(bp_img *im)
 {
-    /* Horizontal banding used on wall tops / pillar caps: reads as machined steel. */
+    /* 用在牆頂／柱頭的水平帶狀紋理：讀起來像加工過的鋼材。 */
     Color base = (Color){ 120, 126, 134, 255 };
     for (int y = 0; y < im->h; y++)
     {
@@ -468,7 +467,7 @@ static void tex_crate(bp_img *im)
             else if (diagonal && !isFrame) c = mixc(wood, frame, 0.55f);
             else
             {
-                /* plank grain along Y */
+                /* 沿 Y 方向的木板紋理 */
                 float grain = fbm(x / 6, y, 128, 3, 809u);
                 c = rgbm(wood.r, wood.g, wood.b, 0.82f + grain * 0.40f);
             }
@@ -487,22 +486,22 @@ static void tex_barrel(bp_img *im)
     {
         for (int x = 0; x < im->w; x++)
         {
-            /* cylindrical shading across U */
+            /* 沿 U 方向的圓柱明暗 */
             float u = (float)x / (float)im->w;
             float cyl = 0.45f + 0.75f * sinf(u * BP_PI);
-            /* ribs */
+            /* 加強肋 */
             float rib = (y % 42 < 6) ? 1.18f : 1.0f;
             if (y % 42 == 0 || y % 42 == 5) rib = 0.7f;
             Color c = rgbm(body.r, body.g, body.b, cyl * rib);
 
-            /* hazard label band */
+            /* 警示標籤色帶 */
             if (y > im->h / 2 - 22 && y < im->h / 2 + 22)
             {
                 if (((x / 10) % 2) == 0) c = mixc(c, (Color){ 214, 186, 40, 255 }, 0.85f);
                 else c = mixc(c, (Color){ 26, 24, 22, 255 }, 0.85f);
                 c = rgbm(c.r, c.g, c.b, cyl);
             }
-            /* rust */
+            /* 鏽跡 */
             float r = fbm(x, y, 128, 4, 811u);
             if (r > 0.64f) c = mixc(c, (Color){ 96, 52, 28, 255 }, (r - 0.64f) * 1.8f);
             img_set(im, x, y, c);
@@ -540,13 +539,13 @@ static void tex_light_panel(bp_img *im, Color glow)
             int px = x % cell, py = y % cell;
             int d = BP_MIN(BP_MIN(px, cell - 1 - px), BP_MIN(py, cell - 1 - py));
             Color c;
-            if (d < 3) c = (Color){ 30, 30, 34, 255 };         /* housing */
+            if (d < 3) c = (Color){ 30, 30, 34, 255 };         /* 外殼 */
             else
             {
                 float core = 1.0f - (float)(d - 3) / (float)(cell / 2);
                 core = BP_CLAMP(core, 0.0f, 1.0f);
                 c = mixc((Color){ glow.r / 2, glow.g / 2, glow.b / 2, 255 }, glow, 0.35f + core * 0.65f);
-                /* diffuser grid */
+                /* 擴散板格網 */
                 if ((px % 8 == 0) || (py % 8 == 0)) c = rgbm(c.r, c.g, c.b, 0.88f);
             }
             img_set(im, x, y, c);
@@ -563,10 +562,10 @@ static void tex_screen(bp_img *im)
             Color bg = (Color){ 10, 22, 26, 255 };
             Color c = bg;
 
-            /* scanlines */
+            /* 掃描線 */
             if (y % 3 == 0) c = rgbm(c.r, c.g, c.b, 0.72f);
 
-            /* fake text rows */
+            /* 偽造的文字列 */
             int row = y / 8;
             float rv = hashf2(row, 0, 1013u);
             if (rv > 0.35f)
@@ -575,17 +574,17 @@ static void tex_screen(bp_img *im)
                 int textLen = 12 + (int)(hashf2(row, 2, 1031u) * 52.0f);
                 if (x > textStart && x < textStart + textLen)
                 {
-                    /* glyph-ish blocks */
+                    /* 類似字形的小方塊 */
                     int gx = (x - textStart) / 4;
                     if (hashf2(row, gx, 1039u) > 0.32f)
                         c = (x % 4 == 3) ? (Color){ 30, 120, 110, 255 } : (Color){ 92, 226, 196, 255 };
                 }
             }
 
-            /* header bar */
+            /* 標題列 */
             if (y < 10) c = mixc((Color){ 30, 90, 84, 255 }, bg, (float)y / 14.0f);
 
-            /* vignette */
+            /* 暗角（vignette） */
             float vx = ((float)x / (float)im->w - 0.5f) * 2.0f;
             float vy = ((float)y / (float)im->h - 0.5f) * 2.0f;
             float vig = 1.0f - 0.42f * (vx * vx + vy * vy);
@@ -620,7 +619,7 @@ static void tex_pipe(bp_img *im)
     {
         for (int x = 0; x < im->w; x++)
         {
-            /* three horizontal pipes with cylindrical shading + flanges */
+            /* 三根水平管：圓柱明暗 + 法蘭 */
             float band = fmodf((float)y, (float)im->h / 3.0f) / ((float)im->h / 3.0f);
             Color c;
             if (band < 0.18f || band > 0.92f) c = (Color){ 26, 26, 30, 255 };
@@ -630,7 +629,7 @@ static void tex_pipe(bp_img *im)
                 float cyl = sinf(t * BP_PI);
                 c = rgbm(126, 118, 96, 0.28f + cyl * 0.95f);
             }
-            /* flange rings */
+            /* 法蘭環 */
             if ((x % 64) < 8) c = rgbm(c.r + 22, c.g + 22, c.b + 24, 1.0f);
             float r = fbm(x, y, 128, 4, 1201u);
             if (r > 0.62f) c = mixc(c, (Color){ 108, 58, 30, 255 }, (r - 0.62f) * 1.5f);
@@ -640,7 +639,7 @@ static void tex_pipe(bp_img *im)
     surface_pass(im, 127u, 0.12f, 0.06f);
 }
 
-/* Radial alpha sprites -- used for decals, particles and the crosshair. */
+/* 徑向 alpha 精靈圖（sprite）—— 用於貼花（decal）、粒子與準心。 */
 static void tex_radial(bp_img *im, Color core, Color edge, float power, bool alpha)
 {
     float cx = (float)im->w * 0.5f, cy = (float)im->h * 0.5f;
@@ -672,7 +671,7 @@ static void tex_blood(bp_img *im)
             float ang = atan2f(dy, dx);
             float d = sqrtf(dx * dx + dy * dy) / ((float)im->w * 0.5f);
 
-            /* irregular splat radius via angular noise */
+            /* 用角度雜訊做出不規則的噴濺半徑 */
             int ai = (int)((ang + BP_PI) / (2.0f * BP_PI) * 16.0f) % 16;
             float lobes = 0.62f + 0.42f * hashf2(ai, 0, 1301u);
             float splat = fbm(x, y, im->w, 3, 1307u);
@@ -682,7 +681,7 @@ static void tex_blood(bp_img *im)
             Color c = mixc((Color){ 62, 6, 10, 255 }, (Color){ 148, 14, 22, 255 }, powf(t, 1.6f));
             c.a = clampb((int)(powf(t, 0.7f) * 255.0f));
 
-            /* droplets outside the main body */
+            /* 主體之外飛濺出去的小血滴 */
             if (t <= 0.0f)
             {
                 float drop = fbm(x * 2, y * 2, im->w * 2, 2, 1321u);
@@ -729,9 +728,9 @@ static void tex_bullet_hole(bp_img *im)
             float n = fbm(x * 2, y * 2, im->w * 2, 3, 1511u);
             float r = 0.30f + n * 0.20f;
             Color c;
-            if (d < r) c = (Color){ 6, 6, 8, 255 };                                  /* hole */
+            if (d < r) c = (Color){ 6, 6, 8, 255 };                                  /* 彈孔 */
             else if (d < r + 0.10f) c = mixc((Color){ 96, 88, 78, 255 }, (Color){ 40, 36, 34, 255 },
-                                             (d - r) / 0.10f);                        /* spall ring */
+                                             (d - r) / 0.10f);                        /* 崩落環（spall ring） */
             else { c.r = 0; c.g = 0; c.b = 0; c.a = 0; }
             float a = (d < r) ? 255.0f : (d < r + 0.10f ? 210.0f * (1.0f - (d - r) / 0.10f) + 45.0f : 0.0f);
             c.a = clampb((int)a);
@@ -750,7 +749,7 @@ static void tex_spark(bp_img *im)
             float dx = (float)x - cx, dy = (float)y - cy;
             float d = sqrtf(dx * dx + dy * dy) / ((float)im->w * 0.5f);
             float t = BP_CLAMP(1.0f - d * 1.35f, 0.0f, 1.0f);
-            /* 4-point star flare */
+            /* 四芒星光芒 */
             float ax = BP_ABS(dx), ay = BP_ABS(dy);
             float flare = BP_MAX(0.0f, 1.0f - BP_MIN(ax, ay) * 9.0f - BP_MAX(ax, ay) * 1.4f);
             t = BP_CLAMP(t + flare * 0.8f, 0.0f, 1.0f);
@@ -770,7 +769,7 @@ static void tex_smoke(bp_img *im)
             float dx = ((float)x - (float)im->w * 0.5f) / ((float)im->w * 0.5f);
             float dy = ((float)y - (float)im->h * 0.5f) / ((float)im->h * 0.5f);
             float d = sqrtf(dx * dx + dy * dy);
-            /* warp the radius with noise so the puff has an irregular silhouette */
+            /* 用雜訊扭曲半徑，讓這團煙霧有不規則的輪廓 */
             float n = fbm(x, y, im->w, 4, 1601u);
             float r = 0.72f + (n - 0.5f) * 0.55f;
             float t = BP_CLAMP(1.0f - d / BP_MAX(r, 0.05f), 0.0f, 1.0f);
@@ -806,7 +805,7 @@ static void tex_crosshair(bp_img *im)
         for (int x = 0; x < im->w; x++)
             img_set(im, x, y, (Color){ 0, 0, 0, 0 });
 
-    /* four ticks with a gap in the middle + a 1px centre dot */
+    /* 四個刻度、中間留空，外加一顆 1px 的中心點 */
     for (int i = 2; i <= 7; i++)
     {
         Color w = (Color){ 255, 255, 255, 235 };
@@ -837,8 +836,8 @@ static void tex_noise(bp_img *im)
 
 static void tex_logo(bp_img *im)
 {
-    /* Title lockup: a chevron "breach" mark. Drawn procedurally so it scales to any
-     * resolution without an SVG/PNG dependency. */
+    /* 標題鎖定圖（title lockup）：一個 V 形的「breach」標記。以程序化方式繪製，因此能縮放到
+     * 任何解析度，而不必依賴 SVG/PNG 檔。 */
     int w = im->w, h = im->h;
     for (int y = 0; y < h; y++)
         for (int x = 0; x < w; x++)
@@ -851,7 +850,7 @@ static void tex_logo(bp_img *im)
             float u = (float)x / (float)w;
             float v = (float)y / (float)h;
 
-            /* outer chevron */
+            /* 外圈 V 形 */
             float chev = BP_ABS(u - 0.5f) * 1.55f;
             float band = BP_ABS(v - (0.20f + chev * 0.62f));
             if (band < 0.055f && v > 0.14f && v < 0.86f)
@@ -859,7 +858,7 @@ static void tex_logo(bp_img *im)
                 float t = 1.0f - band / 0.055f;
                 img_set(im, x, y, (Color){ 255, clampb((int)(90 + 120 * t)), 40, clampb((int)(255 * t)) });
             }
-            /* inner spark */
+            /* 內側的火花 */
             float dx = u - 0.5f, dy = v - 0.60f;
             float d = sqrtf(dx * dx * 1.6f + dy * dy * 4.0f);
             if (d < 0.16f)
@@ -872,18 +871,18 @@ static void tex_logo(bp_img *im)
 }
 
 /* ====================================================================================== */
-/* 3. model helpers                                                                        */
+/* 3. 模型輔助函式                                                                         */
 /* ====================================================================================== */
 static void model_add(bp_model_id id, Mesh mesh, Color tint, Vector3 origin, Vector3 halfExtent)
 {
     if (id < 0 || id >= MDL_COUNT) { UnloadMesh(mesh); return; }
 
-    g_assets.mdl[id].model = LoadModelFromMesh(mesh);   /* takes ownership of the mesh */
+    g_assets.mdl[id].model = LoadModelFromMesh(mesh);   /* 接管該 mesh 的生命週期 */
     if (g_assets.mdl[id].model.materials)
     {
         g_assets.mdl[id].model.materials[0].maps[MATERIAL_MAP_DIFFUSE].color = tint;
-        /* Unlit-ish flat shading: rlgl's default material is Lambert; lowering the
-         * specular keeps the low-poly silhouettes readable at speed. */
+        /* 近似無光照的平面著色：rlgl 的預設材質是 Lambert，把 specular 壓低，低多邊形的
+         * 輪廓在高速移動下依然清晰可讀。 */
         g_assets.mdl[id].model.materials[0].maps[MATERIAL_MAP_SPECULAR].color = (Color){ 8, 8, 8, 255 };
     }
     g_assets.mdl[id].origin = origin;
@@ -908,7 +907,7 @@ static void model_simple(bp_model_id id, int shape, Vector3 p, Color tint)
 }
 
 /* ====================================================================================== */
-/* 4. font                                                                                 */
+/* 4. 字型                                                                                 */
 /* ====================================================================================== */
 #include "bp_assets_font.inc"
 
@@ -949,7 +948,7 @@ static Font build_font(int scale)
         glyphs[i].image = im;
         glyphs[i].offsetX = 0;
         glyphs[i].offsetY = 0;
-        glyphs[i].advanceX = gw + BP_MAX(1, scale);   /* 1px tracking at 1x, scales up */
+        glyphs[i].advanceX = gw + BP_MAX(1, scale);   /* 1x 時為 1px 字距，並隨倍率放大 */
     }
 
     Rectangle *recs = NULL;
@@ -974,7 +973,7 @@ static Font build_font(int scale)
         font.glyphs = infos;
     }
 
-    /* Pixel fonts must never be filtered -- bilinear on a 5x7 bitmap turns 'M' into mush. */
+    /* 點陣字型絕不能被過濾：對 5x7 的點陣圖做雙線性插值，會把 'M' 糊成一團。 */
     if (font.texture.id) SetTextureFilter(font.texture, TEXTURE_FILTER_POINT);
 
     for (int i = 0; i < count; i++) UnloadImage(glyphs[i].image);
@@ -986,7 +985,7 @@ static Font build_font(int scale)
 }
 
 /* ====================================================================================== */
-/* 5. init                                                                                 */
+/* 5. 初始化                                                                               */
 /* ====================================================================================== */
 static Texture2D make_tex(void (*gen)(bp_img *), int size, bool mips)
 {
@@ -1036,13 +1035,11 @@ static void gen_noise(bp_img *im)          { tex_noise(im); }
 static void gen_logo(bp_img *im)           { tex_logo(im); }
 
 /*
- * Boot progress instrumentation.
+ * 開機進度的計時埋點。
  *
- * Procedural generation is the slowest thing that happens at startup and it is entirely
- * CPU-bound, so on a weak machine (or a software rasteriser) it is the difference between a
- * two-second and a twenty-second load. Each group logs its own cost: that makes the boot
- * time a measurable, tunable number instead of a mystery, and it means a slow texture can be
- * found without a profiler.
+ * 程序化生成是啟動過程中最慢的一環，而且完全受限於 CPU，所以在弱機器上（或改用軟體光柵化
+ * 時），它就是「兩秒開完」與「二十秒開完」的差別。每一組各自記錄自己的耗時：這讓開機時間
+ * 變成一個可量測、可調校的數字，而不是一團謎，也讓你能不靠 profiler 就找出拖慢的那張貼圖。
  */
 static double s_stage_t = 0.0;
 static char   s_stage_name[48] = "";
@@ -1061,10 +1058,10 @@ void bp_assets_init(void)
     double t0 = GetTime();
     memset(&g_assets, 0, sizeof(g_assets));
 
-    /* ---- palette: a restricted, warm/cool split keeps the world readable at speed ---- */
-    g_assets.pal_accent   = (Color){ 255, 138, 32, 255 };   /* amber  -- player/brand  */
-    g_assets.pal_accent2  = (Color){  92, 226, 196, 255 };  /* teal   -- tech/ally     */
-    g_assets.pal_danger   = (Color){ 232,  52,  60, 255 };  /* red    -- enemy/damage  */
+    /* ---- 色盤：受限的暖／冷分工，讓世界在高速移動下依然讀得清楚 ---- */
+    g_assets.pal_accent   = (Color){ 255, 138, 32, 255 };   /* 琥珀色 —— 玩家／品牌     */
+    g_assets.pal_accent2  = (Color){  92, 226, 196, 255 };  /* 青綠色 —— 科技／友方     */
+    g_assets.pal_danger   = (Color){ 232,  52,  60, 255 };  /* 紅色   —— 敵人／傷害     */
     g_assets.pal_health   = (Color){  86, 214, 110, 255 };
     g_assets.pal_armor    = (Color){  96, 168, 255, 255 };
     g_assets.pal_ammo     = (Color){ 240, 208,  92, 255 };
@@ -1073,7 +1070,7 @@ void bp_assets_init(void)
     g_assets.pal_text     = (Color){ 236, 238, 242, 255 };
     g_assets.pal_text_dim = (Color){ 138, 144, 156, 255 };
 
-    /* ---- architecture (256px, mipmapped + anisotropic) ---- */
+    /* ---- 建築材質（256px，含 mip + 異向性過濾） ---- */
     stage_begin("architecture textures");
     g_assets.tex[TEX_WALL_BRICK]     = make_tex(gen_wall_brick,     TEX_ARCH_SIZE, true);
     g_assets.tex[TEX_WALL_METAL]     = make_tex(gen_wall_metal,     TEX_ARCH_SIZE, true);
@@ -1096,7 +1093,7 @@ void bp_assets_init(void)
 
     stage_end();
 
-    /* ---- decals / fx (unmipped or point-filtered: they are drawn at near 1:1 texel) ---- */
+    /* ---- 貼花／特效（不做 mip 或只用點過濾：它們幾乎以 1:1 texel 繪製） ---- */
     stage_begin("fx and decal textures");
     g_assets.tex[TEX_BLOOD_SPLAT] = make_tex(gen_blood,  TEX_SMALL_SIZE, false);
     g_assets.tex[TEX_SCORCH]      = make_tex(gen_scorch, TEX_SMALL_SIZE, false);
@@ -1115,7 +1112,7 @@ void bp_assets_init(void)
 
     stage_end();
 
-    /* ---- models ---- */
+    /* ---- 模型 ---- */
     stage_begin("procedural models");
     Color flesh   = (Color){ 168,  92,  76, 255 };
     Color fleshDk = (Color){ 118,  58,  50, 255 };
@@ -1125,70 +1122,70 @@ void bp_assets_init(void)
     Color glowR   = (Color){ 236,  64,  58, 255 };
     Color glowC   = (Color){  92, 226, 196, 255 };
 
-    /* humanoid grunt: torso / head / arm / leg, animated by per-part transforms */
+    /* 人形雜兵（grunt）：軀幹 / 頭 / 手臂 / 腿，由各部件的 transform 分別驅動動畫 */
     model_simple(MDL_ENEMY_TORSO, 0, (Vector3){ 0.62f, 0.78f, 0.38f }, flesh);
     model_simple(MDL_ENEMY_HEAD,  0, (Vector3){ 0.34f, 0.32f, 0.32f }, fleshDk);
     model_simple(MDL_ENEMY_ARM,   0, (Vector3){ 0.17f, 0.62f, 0.17f }, fleshDk);
     model_simple(MDL_ENEMY_LEG,   0, (Vector3){ 0.21f, 0.78f, 0.21f }, dark);
 
-    /* hound: low, fast, four legs */
+    /* 獵犬（hound）：低伏、快速、四條腿 */
     model_simple(MDL_HOUND_BODY, 0, (Vector3){ 0.52f, 0.42f, 1.05f }, chitin);
     model_simple(MDL_HOUND_HEAD, 3, (Vector3){ 0.22f, 0.38f, 8.0f }, glowR);
     model_simple(MDL_HOUND_LEG,  0, (Vector3){ 0.12f, 0.46f, 0.12f }, dark);
 
-    /* brute: heavy, wide */
+    /* 巨漢（brute）：厚重、寬體 */
     model_simple(MDL_BRUTE_TORSO, 0, (Vector3){ 1.35f, 1.25f, 0.85f }, (Color){ 122, 68, 62, 255 });
     model_simple(MDL_BRUTE_ARM,   0, (Vector3){ 0.38f, 1.05f, 0.38f }, (Color){ 96, 52, 48, 255 });
     model_simple(MDL_BRUTE_LEG,   0, (Vector3){ 0.46f, 1.00f, 0.46f }, dark);
     model_simple(MDL_BRUTE_HEAD,  0, (Vector3){ 0.58f, 0.46f, 0.52f }, (Color){ 140, 80, 70, 255 });
 
-    /* turret */
+    /* 砲塔 */
     model_simple(MDL_TURRET_BASE,   1, (Vector3){ 0.42f, 0.55f, 12.0f }, steel);
     model_simple(MDL_TURRET_BARREL, 0, (Vector3){ 0.16f, 0.16f, 1.05f }, dark);
 
-    /* viewmodel: pistol */
+    /* 第一人稱視圖模型（viewmodel）：手槍 */
     model_simple(MDL_GUN_PISTOL_BODY,  0, (Vector3){ 0.055f, 0.150f, 0.230f }, (Color){ 52, 54, 60, 255 });
     model_simple(MDL_GUN_PISTOL_SLIDE, 0, (Vector3){ 0.048f, 0.052f, 0.270f }, (Color){ 96, 100, 110, 255 });
     model_simple(MDL_GUN_HAND,         0, (Vector3){ 0.080f, 0.110f, 0.120f }, (Color){ 178, 132, 104, 255 });
 
-    /* viewmodel: shotgun */
+    /* 第一人稱視圖模型（viewmodel）：霰彈槍 */
     model_simple(MDL_GUN_SHOTGUN_BODY,   0, (Vector3){ 0.075f, 0.110f, 0.620f }, (Color){ 84, 60, 40, 255 });
     model_simple(MDL_GUN_SHOTGUN_BARREL, 1, (Vector3){ 0.028f, 0.600f, 10.0f }, (Color){ 58, 60, 66, 255 });
     model_simple(MDL_GUN_SHOTGUN_PUMP,   0, (Vector3){ 0.062f, 0.062f, 0.170f }, (Color){ 110, 78, 48, 255 });
 
-    /* viewmodel: smg */
+    /* 第一人稱視圖模型（viewmodel）：衝鋒槍 */
     model_simple(MDL_GUN_SMG_BODY,  0, (Vector3){ 0.070f, 0.130f, 0.400f }, (Color){ 60, 64, 72, 255 });
     model_simple(MDL_GUN_SMG_MAG,   0, (Vector3){ 0.045f, 0.200f, 0.075f }, (Color){ 40, 42, 48, 255 });
     model_simple(MDL_GUN_SMG_STOCK, 0, (Vector3){ 0.045f, 0.075f, 0.190f }, (Color){ 46, 48, 54, 255 });
 
-    /* viewmodel: railgun */
+    /* 第一人稱視圖模型（viewmodel）：電磁軌砲 */
     model_simple(MDL_GUN_RAIL_BODY, 0, (Vector3){ 0.090f, 0.120f, 0.780f }, (Color){ 70, 76, 88, 255 });
     model_simple(MDL_GUN_RAIL_COIL, 1, (Vector3){ 0.052f, 0.090f, 14.0f }, glowC);
     model_simple(MDL_GUN_RAIL_CORE, 1, (Vector3){ 0.020f, 0.700f, 8.0f }, (Color){ 200, 255, 250, 255 });
 
-    /* viewmodel: rocket launcher */
+    /* 第一人稱視圖模型（viewmodel）：火箭發射器 */
     model_simple(MDL_GUN_ROCKET_TUBE, 1, (Vector3){ 0.075f, 0.820f, 12.0f }, (Color){ 74, 80, 68, 255 });
     model_simple(MDL_GUN_ROCKET_SIGHT, 0, (Vector3){ 0.030f, 0.085f, 0.040f }, (Color){ 40, 42, 46, 255 });
 
-    /* pickups */
+    /* 拾取物 */
     model_simple(MDL_PICKUP_HEALTH, 0, (Vector3){ 0.42f, 0.30f, 0.30f }, (Color){ 232, 236, 240, 255 });
     model_simple(MDL_PICKUP_ARMOR,  0, (Vector3){ 0.44f, 0.36f, 0.24f }, (Color){  96, 168, 255, 255 });
     model_simple(MDL_PICKUP_AMMO,   0, (Vector3){ 0.34f, 0.22f, 0.40f }, (Color){ 240, 208,  92, 255 });
     model_simple(MDL_PICKUP_WEAPON, 0, (Vector3){ 0.20f, 0.16f, 0.72f }, (Color){  70,  74,  84, 255 });
 
-    /* projectiles */
+    /* 彈體 */
     model_simple(MDL_PROJECTILE_ROCKET, 3, (Vector3){ 0.11f, 0.42f, 8.0f }, (Color){ 210, 214, 220, 255 });
     model_simple(MDL_PROJECTILE_PLASMA, 2, (Vector3){ 0.16f, 12.0f, 12.0f }, glowC);
 
-    /* props */
+    /* 場景道具 */
     model_simple(MDL_BARREL, 1, (Vector3){ 0.34f, 1.05f, 14.0f }, (Color){ 168, 74, 48, 255 });
     model_simple(MDL_CRATE,  0, (Vector3){ 0.95f, 0.95f, 0.95f }, (Color){ 150, 112, 66, 255 });
 
     stage_end();
 
-    /* ---- fonts ---- */
+    /* ---- 字型 ---- */
     stage_begin("bitmap fonts");
-    g_assets.font_small = build_font(1);    /*  7px cap height */
+    g_assets.font_small = build_font(1);    /*  7px 大寫高度 */
     g_assets.font_main  = build_font(2);    /* 14px */
     g_assets.font_big   = build_font(4);    /* 28px */
     g_assets.font_huge  = build_font(8);    /* 56px */

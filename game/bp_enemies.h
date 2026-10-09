@@ -1,23 +1,22 @@
 /******************************************************************************************
- * bp_enemies.h -- enemy archetypes, AI state machine, animation and hitboxes.
+ * bp_enemies.h -- 敵人原型（archetype）、AI 狀態機、動畫與命中框。
  *
- * AI ARCHITECTURE
- *   A finite state machine over six states (DORMANT / IDLE / PURSUE / ATTACK / STAGGER /
- *   DYING) plus a "desire" layer that picks strafing direction. No behaviour trees, no
- *   GOAP, no utility scores. For an arena shooter the correct AI is *legible*: the player
- *   must be able to look at an enemy and know what it is about to do within 150 ms. Every
- *   state has a tell (sound, pose, colour) and every transition has a minimum dwell time so
- *   enemies never strobe between two behaviours.
+ * AI 架構
+ *   一個涵蓋六個狀態的有限狀態機（DORMANT / IDLE / PURSUE / ATTACK / STAGGER / DYING），
+ *   外加一層負責挑選橫移方向的「意願（desire）」。沒有行為樹（behaviour tree）、沒有
+ *   GOAP、沒有效用分數（utility scores）。對競技場射擊遊戲而言，正確的 AI 必須「一眼看得
+ *   懂」：玩家要能看著一隻敵人，並在 150 ms 內判斷它接下來想幹什麼。每個狀態都有明顯的
+ *   前兆（聲音、姿勢、顏色），每次狀態轉換都有最短停留時間，因此敵人不會在兩種行為之間
+ *   不斷閃爍。
  *
- *   Pathing is steering, not pathfinding: seek + obstacle avoidance + separation. On an
- *   arena map with sparse convex cover, a well-tuned wall-follow avoid beats an A* grid in
- *   both CPU cost and perceived intelligence, because it never produces the "stuck in a
- *   doorway" failure mode that players notice immediately.
+ *   路徑採用操舵（steering）而非尋路（pathfinding）：追擊 + 障礙物閃避 + 分離。在掩體稀疏
+ *   的競技場地圖上，調校良好的「沿牆閃避」無論在 CPU 成本或給人的智慧感上都勝過 A* 網格，
+ *   因為它永遠不會產生玩家一眼就察覺的「卡在門口」故障模式。
  *
- * HITBOXES
- *   A body cylinder (as an AABB) plus a smaller head box on top. Headshots exist because a
- *   game with no precision reward trains players to spray. The head box is generous (0.62x
- *   the body radius) because punishing near-misses feels worse than rewarding them.
+ * 命中框
+ *   一個圓柱形的身體（以 AABB 表示），上方再疊一個較小的頭部方框。會有爆頭，是因為沒有
+ *   精準獎勵的遊戲只會訓練玩家亂掃射。頭部方框刻意給得寬鬆（為身體半徑的 0.62 倍），因為
+ *   懲罰「差一點點」比獎勵它更令人不快。
  ******************************************************************************************/
 #ifndef BP_ENEMIES_H
 #define BP_ENEMIES_H
@@ -36,12 +35,12 @@ typedef enum {
 } bp_enemy_type;
 
 typedef enum {
-    ES_DORMANT = 0,     /* spawned but not yet activated */
-    ES_IDLE,            /* patrolling / looking for the player */
-    ES_PURSUE,          /* has LOS or heard the player, closing in */
-    ES_ATTACK,          /* in range, attacking */
-    ES_STAGGER,         /* pain reaction, brief */
-    ES_DYING,           /* death animation, no collision */
+    ES_DORMANT = 0,     /* 已生成，但尚未被啟動 */
+    ES_IDLE,            /* 巡邏 / 尋找玩家 */
+    ES_PURSUE,          /* 取得視線（LOS）或聽見玩家，正在逼近 */
+    ES_ATTACK,          /* 已進入射程，攻擊中 */
+    ES_STAGGER,         /* 受痛反應，短暫 */
+    ES_DYING,           /* 死亡動畫期間，不參與碰撞 */
     ES_DEAD
 } bp_enemy_state;
 
@@ -79,7 +78,7 @@ typedef struct {
     float   proj_damage;
     bool    is_static;
     float   knockback_scale;
-    int     body_set;         /* 0 humanoid, 1 hound, 2 brute, 3 turret */
+    int     body_set;         /* 0 人形、1 獵犬、2 巨漢（brute）、3 砲塔 */
     int     sfx_sight, sfx_pain, sfx_die;
 } bp_enemy_def;
 
@@ -88,9 +87,9 @@ typedef struct {
     bp_enemy_state state;
     float   state_time;
 
-    Vector3 pos;          /* feet position */
+    Vector3 pos;          /* 腳部位置 */
     Vector3 vel;
-    float   yaw;          /* degrees, facing */
+    float   yaw;          /* 度（degrees），朝向 */
     bool    on_ground;
 
     float   health;
@@ -99,34 +98,34 @@ typedef struct {
 
     float   attack_timer;
     float   stagger_timer;
-    float   pain_scale;     /* 0 on the hardest difficulty: no flinch, by design */
+    float   pain_scale;     /* 最高難度時固定為 0：刻意讓敵人不畏縮 */
     float   die_timer;
     float   pain_flash;
     float   activation_delay;
 
-    /* perception */
+    /* 感知 */
     bool    can_see;
     float   last_known_dist;
     Vector3 last_known_pos;
     float   memory_time;
     bool    alerted_others;
 
-    /* steering */
+    /* 操舵（steering） */
     float   strafe_dir;
     float   strafe_timer;
     float   avoid_timer;
     Vector3 avoid_dir;
     float   wander_yaw;
 
-    /* animation */
+    /* 動畫 */
     float   anim_time;
     float   leg_phase;
     float   arm_phase;
     float   bob;
-    float   attack_wind;    /* 0..1 telegraph */
+    float   attack_wind;    /* 0..1 的出招前兆（telegraph） */
     float   lunge;
 
-    /* bookkeeping */
+    /* 簿記 */
     float   damage_dealt_to_player;
     int     hits_taken;
     bool    counted_for_wave;
@@ -164,11 +163,11 @@ void   bp_enemy_update(float dt, Vector3 playerPos, Vector3 playerEye, bool play
 void   bp_enemy_draw(Camera3D cam, Vector3 viewer);
 void   bp_enemy_draw_debug(void);
 
-/* damage entry point used by bp_hitdetect */
+/* bp_hitdetect 使用的傷害入口 */
 float  bp_enemy_take_damage(bp_handle h, float amount, Vector3 point, Vector3 dir,
                             bool headshot, float knockback, bool *out_killed);
 
-/* queries */
+/* 查詢 */
 bp_enemy *bp_enemy_get(bp_handle h);
 int       bp_enemy_alive_count(void);
 int       bp_enemy_count_type(bp_enemy_type t);

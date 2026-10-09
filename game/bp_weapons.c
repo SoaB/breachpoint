@@ -1,5 +1,18 @@
 /******************************************************************************************
- * bp_weapons.c
+ * bp_weapons.c -- 武器狀態機、開火與投射物、視圖模型（viewmodel）繪製。
+ *
+ * 武器是這款遊戲裡少數必須同時顧到「手感」與「資料」的模組，因此這裡刻意把兩者切開：
+ *
+ *   - 所有數值（傷害、散布、射速、後座力…）都放在 bp_weapon_def 表中，可由
+ *     assets/cfg/weapons.cfg 覆寫；未支援的鍵會被忽略並寫入日誌。這張表同時也是設定檔
+ *     缺失時的回退方案，所以就算資源目錄整個不見，可執行檔依然能單獨跑起來。
+ *
+ *   - 機器（冷卻、裝填、換槍、散布模型）只認這張表，不認任何寫死的常數；因此調校只要改
+ *     一列數值就能改變手感，不必翻遍整個狀態機。
+ *
+ * 散布與後座力的設計契約
+ *   站定不動就是精準的，移動就得付出散布的代價，而瞄準（ADS）又能把代價壓回去。三者互相
+ *   牽制，移動與射擊才會一直維持張力；一旦只剩其中一條路，另一條就立刻變成唯一正解。
  ******************************************************************************************/
 #include "bp_weapons.h"
 #include "bp_world.h"
@@ -13,7 +26,7 @@
 bp_weapon_sys g_weapons = { 0 };
 
 /* ====================================================================================== */
-/* 1. compiled-in default table (the fallback if assets/cfg/weapons.cfg is missing)         */
+/* 1. 編譯期預設表（assets/cfg/weapons.cfg 缺失時的回退值）                                  */
 /* ====================================================================================== */
 static bp_weapon_def s_defaults[WPN_ID_COUNT] = {
     {
@@ -71,7 +84,7 @@ static bp_weapon_def s_defaults[WPN_ID_COUNT] = {
 const bp_weapon_def *g_weapon_table = s_defaults;
 
 /* ====================================================================================== */
-/* 2. config overlay                                                                       */
+/* 2. 設定檔覆寫（config overlay）                                                           */
 /* ====================================================================================== */
 static int find_weapon_index(const char *id)
 {
@@ -149,7 +162,7 @@ bool bp_weapons_load_config(const char *path)
 }
 
 /* ====================================================================================== */
-/* 3. init / loadout                                                                       */
+/* 3. 初始化 / 裝備配置                                                                      */
 /* ====================================================================================== */
 void bp_weapons_init(void)
 {
@@ -292,7 +305,7 @@ void bp_weapons_try_reload(void)
 }
 
 /* ====================================================================================== */
-/* 4. firing                                                                               */
+/* 4. 開火                                                                                   */
 /* ====================================================================================== */
 static Vector3 spread_direction(Camera3D cam, float spreadDeg)
 {
@@ -303,8 +316,8 @@ static Vector3 spread_direction(Camera3D cam, float spreadDeg)
     Vector3 up = Vector3CrossProduct(right, fwd);
 
     float rad = spreadDeg * BP_DEG2RAD;
-    /* Sample uniformly inside the cone (sqrt for area-uniform distribution, otherwise the
-     * pattern clusters in the centre and the weapon feels artificially accurate). */
+    /* 在圓錐內做均勻取樣（取 sqrt 才是面積均勻的分佈，否則彈著會往中心聚集，武器會顯得
+     * 不自然地準）。 */
     float a = bp_rng_range(&g_engine.rng, 0.0f, 2.0f * BP_PI);
     float r = sqrtf(bp_rng_range(&g_engine.rng, 0.0f, 1.0f)) * tanf(rad);
 
@@ -378,8 +391,8 @@ static void do_hitscan(const bp_weapon_def *d, Camera3D cam, float spread)
     if (anyHit) g_weapons.shots_hit++;
     if (anyHead) g_weapons.headshots++;
 
-    /* One tracer for the whole shot rather than one per pellet: ten overlapping shotgun
-     * tracers read as a white blob and cost ten times the fill rate. */
+    /* 整次射擊只畫一條曳光（tracer），而不是每顆彈丸一條：十條霰彈曳光疊在一起只會變成
+     * 一團白點，還把填色率（fill rate）吃掉十倍。 */
     if (d->tracer_width > 0.0f && d->tracer_life > 0.0f)
     {
         Vector3 muzzle = Vector3Add(origin, Vector3Scale(bp_camera_forward(), 0.6f));
@@ -411,9 +424,8 @@ void bp_weapons_try_fire(bool triggerHeld, bool triggerPressed)
     const bp_weapon_def *d = bp_weapons_current_def();
     if (!bp_weapons_can_fire())
     {
-        /* Dry fire click. Giving audio feedback for an empty chamber is what stops the
-         * player from thinking the input was dropped -- a surprisingly common complaint in
-         * playtests of shooters that omit it. */
+        /* 空倉擊發的喀嚓聲。為「彈倉已空」提供音訊回饋，才能讓玩家不以為自己的輸入被吃掉
+         * —— 在射擊遊戲的遊測中，漏掉這點是最常見的抱怨之一。 */
         if (triggerPressed && g_weapons.state == WSTATE_IDLE && g_weapons.mag[d->id] <= 0 &&
             (GetTime() - (double)g_weapons.dry_fire_time) > 0.28)
         {
@@ -439,7 +451,7 @@ void bp_weapons_try_fire(bool triggerHeld, bool triggerPressed)
     if (d->category == WCATEGORY_PROJECTILE) do_projectile(d, cam, cam.position);
     else                                     do_hitscan(d, cam, spread);
 
-    /* audio + visual feedback */
+    /* 音訊 + 視覺回饋 */
     bp_audio_play(d->sfx_fire, 1.0f);
     Vector3 fwd = bp_camera_forward();
     Vector3 muzzle = Vector3Add(cam.position, Vector3Scale(fwd, 0.85f));
@@ -448,11 +460,11 @@ void bp_weapons_try_fire(bool triggerHeld, bool triggerPressed)
                          d->recoil_yaw * bp_rng_range(&g_engine.rng, -1.0f, 1.0f));
     bp_fx_shake(d->shake, 0.18f);
 
-    /* shell ejection to the player's right */
+    /* 拋殼方向：往玩家的右側 */
     bp_fx_shell_eject(Vector3Add(cam.position, Vector3Scale(fwd, 0.35f)),
                       bp_camera_right(), (Vector3){ 0, 1, 0 });
 
-    /* recoil also drives the speed-line post effect on the heaviest guns */
+    /* 後座力同時驅動最重那幾把槍的速度線後製效果 */
     if (d->shake > 0.35f) g_gfx.speed_lines = BP_MIN(1.0f, g_gfx.speed_lines + 0.35f);
 
     if (g_weapons.mag[d->id] <= 0)
@@ -463,7 +475,7 @@ void bp_weapons_try_fire(bool triggerHeld, bool triggerPressed)
 }
 
 /* ====================================================================================== */
-/* 5. projectiles                                                                          */
+/* 5. 投射物                                                                                 */
 /* ====================================================================================== */
 void bp_projectile_spawn(Vector3 pos, Vector3 dir, float speed, float damage,
                          float radius, float blastRadius, bool fromPlayer, Color color,
@@ -472,7 +484,7 @@ void bp_projectile_spawn(Vector3 pos, Vector3 dir, float speed, float damage,
     bp_projectile *p = NULL;
     for (int i = 0; i < MAX_PROJECTILES; i++)
         if (!g_weapons.projectiles[i].alive) { p = &g_weapons.projectiles[i]; break; }
-    if (!p) { p = &g_weapons.projectiles[0]; }   /* recycle: never refuse to fire */
+    if (!p) { p = &g_weapons.projectiles[0]; }   /* 回收再用：永遠不拒絕開火 */
 
     memset(p, 0, sizeof(*p));
     p->pos = pos;
@@ -509,9 +521,9 @@ void bp_projectile_explode(bp_projectile *p, Vector3 at)
 
     if (p->from_player && playerDamage > 0.0f)
     {
-        /* Rocket jumping must cost something but never be a suicide button: self damage is
-         * scaled down and, crucially, the *knockback* is full strength. That asymmetry is
-         * the whole reason rocket jumping is a movement technique rather than a hazard. */
+        /* 火箭跳（rocket jump）必須有代價，但絕不能變成自殺按鈕：自傷經過縮放，而關鍵在
+         * 於「擊退」保持全額。正是這種不對稱，讓火箭跳成為一種移動技巧，而不是一種傷害
+         * 陷阱。 */
         bp_player_damage(playerDamage * p->self_scale, at, 0.0f);
         Vector3 away = Vector3Subtract(bp_player_position(), at);
         float d = Vector3Length(away);
@@ -542,9 +554,8 @@ static void update_projectiles(float dt, Camera3D cam)
 
         p->vel.y += p->gravity * dt;
 
-        /* Sub-step the movement so a fast rocket cannot tunnel through thin geometry. At
-         * 34 m/s and 120 Hz a single step is 28 cm, which is thinner than some wall trim,
-         * so we integrate in slices no longer than the projectile's own body radius. */
+        /* 把移動切成子步進，免得高速火箭直接穿過薄幾何體。34 m/s 在 120 Hz 下單步可達
+         * 28 公分，比某些牆面裝飾還厚，因此積分切片的長度不得超過投射物自身的碰撞半徑。 */
         float speed = Vector3Length(p->vel);
         int steps = BP_MAX(1, BP_MIN(6, (int)ceilf(speed * dt / BP_MAX(p->body_radius, 0.08f))));
         float sub = dt / (float)steps;
@@ -624,7 +635,7 @@ void bp_weapons_draw_projectiles(Camera3D cam)
         else
             DrawSphere(p->pos, p->body_radius * 2.0f, p->color);
 
-        /* additive halo: sells the projectile as a light source in a renderer with none */
+        /* 加性（additive）光暈：在沒有任何光源的算圖器裡，靠它讓投射物看起來像個光源 */
         rlSetBlendMode(RL_BLEND_ADDITIVE);
         DrawSphere(p->pos, p->body_radius * 3.4f, (Color){ p->color.r, p->color.g, p->color.b, 60 });
         rlSetBlendMode(RL_BLEND_ALPHA);
@@ -632,7 +643,7 @@ void bp_weapons_draw_projectiles(Camera3D cam)
 }
 
 /* ====================================================================================== */
-/* 6. per-frame update                                                                     */
+/* 6. 每畫面更新                                                                             */
 /* ====================================================================================== */
 void bp_weapons_update(float dt, Camera3D cam, Vector3 velocity, bool onGround)
 {
@@ -643,26 +654,25 @@ void bp_weapons_update(float dt, Camera3D cam, Vector3 velocity, bool onGround)
     g_weapons.state_time += dt;
     g_weapons.recoil_viewmodel = bp_damp(g_weapons.recoil_viewmodel, 0.0f, 11.0f, dt);
 
-    /* ---- spread model ----
-     * Aim-down-sights tightens the cone; movement widens it; being airborne widens it most.
-     * This is the contract with the player: stand still to be precise, or move and accept
-     * the cone. Both are valid, which is what keeps movement and shooting in tension. */
+    /* ---- 散布模型 ----
+     * 瞄準（ADS）收緊圓錐；移動放寬圓錐；離地（騰空）放得最寬。這就是與玩家之間的契約：
+     * 站著不動就精準，移動就接受較大的散布。兩種玩法都成立，移動與射擊才會維持張力。 */
     float speed = Vector3Length(velocity);
     float moveFactor = BP_CLAMP(speed / 9.0f, 0.0f, 1.6f) * d->spread_move;
     float airFactor = onGround ? 0.0f : 1.1f;
-    /* ads_held is published by the player controller before this call */
+    /* ads_held 由玩家控制器在本次呼叫之前發布 */
     g_weapons.ads = bp_damp(g_weapons.ads, g_weapons.ads_held ? 1.0f : 0.0f, 13.0f, dt);
     float targetSpread = BP_MAX(0.0f, d->spread_hip + moveFactor + airFactor);
     targetSpread = targetSpread * (1.0f - g_weapons.ads * 0.65f);
     g_weapons.spread_current = bp_damp(g_weapons.spread_current, targetSpread, 12.0f, dt);
 
-    /* ---- state machine ---- */
+    /* ---- 狀態機 ---- */
     switch (g_weapons.state)
     {
         case WSTATE_RELOADING:
         {
             g_weapons.reload_progress = BP_CLAMP(g_weapons.state_time / BP_MAX(d->reload_time, 0.05f), 0.0f, 1.0f);
-            /* shell/insert click at the midpoint */
+            /* 裝填到一半時的退殼／上膛喀嚓聲 */
             if (g_weapons.state_time >= d->reload_time * 0.45f && g_weapons.state_time - dt < d->reload_time * 0.45f)
                 bp_audio_play(SFX_RELOAD_IN, 1.0f);
 
@@ -712,9 +722,9 @@ void bp_weapons_update(float dt, Camera3D cam, Vector3 velocity, bool onGround)
             break;
     }
 
-    /* ---- viewmodel sway ----
-     * Driven by look delta, not by mouse position: the gun lags the turn and settles back.
-     * This is the single cheapest way to make a low-poly viewmodel feel weighted. */
+    /* ---- 視圖模型擺動（viewmodel sway）----
+     * 由視角位移量（look delta）驅動，而不是滑鼠位置：槍會追不上轉身、再自行回正。這是
+     * 讓低多邊形視圖模型顯得有重量感最便宜的做法。 */
     g_weapons.sway_x = bp_damp(g_weapons.sway_x,
                                BP_CLAMP(-bp_input_look_dx() * 0.02f, -1.0f, 1.0f), 9.0f, dt);
     g_weapons.sway_y = bp_damp(g_weapons.sway_y,
@@ -724,12 +734,12 @@ void bp_weapons_update(float dt, Camera3D cam, Vector3 velocity, bool onGround)
 }
 
 /* ====================================================================================== */
-/* 7. viewmodel                                                                            */
+/* 7. 視圖模型（viewmodel）                                                                  */
 /* ====================================================================================== */
 /*
- * Draw a single viewmodel part in the current orthographic/modelview state.
- * The weapon root transform is already in RLGL.State.modelview, so `local` only has to
- * carry any extra per-part offset (currently identity for all parts).
+ * 在目前的正交投影／modelview 狀態下繪製單一視圖模型零件。
+ * 武器的根轉換已經存在 RLGL.State.modelview 裡，所以 `local` 只需要承載每個零件額外的
+ * 偏移（目前所有零件都是單位矩陣）。
  */
 static void draw_vm_part(bp_model_id id, Vector3 scale, Matrix local, Color tint)
 {
@@ -750,8 +760,8 @@ void bp_weapons_draw_viewmodel(Camera3D cam, float speed01)
     BP_UNUSED(cam);
     const bp_weapon_def *d = bp_weapons_current_def();
 
-    /* Lower the gun while it is being holstered, raise it while drawing. Without this the
-     * swap reads as a teleport instead of a physical action. */
+    /* 收槍時把槍壓低、拔槍時把槍抬高。少了這段，換槍會讀起來像是瞬間移位，而不是一個
+     * 有實體感的動作。 */
     float holster = 0.0f;
     if (g_weapons.state == WSTATE_SWITCHING_OUT) holster = g_weapons.switch_progress;
     else if (g_weapons.state == WSTATE_SWITCHING_IN) holster = 1.0f - g_weapons.switch_progress;
@@ -759,9 +769,8 @@ void bp_weapons_draw_viewmodel(Camera3D cam, float speed01)
     float reloadDip = (g_weapons.state == WSTATE_RELOADING)
                     ? sinf(g_weapons.reload_progress * BP_PI) * 0.34f : 0.0f;
 
-    /* The viewmodel is rendered with its own orthographic projection so it can never clip
-     * into world geometry. This is the standard FPS solution and matters a lot in tight
-     * corridors, where a perspective viewmodel would intersect every wall the player hugs. */
+    /* 視圖模型使用自己的正交投影繪製，因此永遠不會插入世界幾何體。這是標準 FPS 解法，
+     * 在狹窄走廊裡尤其關鍵：透視投影的視圖模型會與玩家貼著走的每一道牆相交。 */
     Camera3D vm = { 0 };
     vm.position = (Vector3){ 0, 0, 1.0f };
     vm.target = (Vector3){ 0, 0, 0 };
@@ -787,10 +796,10 @@ void bp_weapons_draw_viewmodel(Camera3D cam, float speed01)
     base.z += g_camera.vm_position.z - holster * 0.10f;
 
     /*
-     * Full Euler rotation in degrees, built the same way the camera builds its own view
-     * matrix: roll about Z, pitch about X, yaw about Y. Composing this once per weapon and
-     * pushing it through rlSetMatrixModelview() lets DrawMesh() place the parts exactly,
-     * which DrawModelEx's single axis/angle pair cannot express.
+     * 完整的歐拉旋轉（以度為單位），組法與相機建立自身視圖矩陣的方式相同：先繞 Z 滾轉、
+     * 再繞 X 俯仰、最後繞 Y 偏航。每把武器組合一次、再經 rlSetMatrixModelview() 推入，
+     * DrawMesh() 就能把零件放到精確的位置 —— 這是 DrawModelEx 那組單一「軸／角度」無法
+     * 表達的。
      */
     float rotX = g_camera.vm_rotation.x - reloadDip * 42.0f - holster * 18.0f + g_weapons.sway_y * 4.0f;
     float rotY = g_camera.vm_rotation.y + g_weapons.sway_x * 5.0f;
@@ -803,15 +812,15 @@ void bp_weapons_draw_viewmodel(Camera3D cam, float speed01)
     Matrix ident = MatrixIdentity();
     Color tint = (Color){ 232, 232, 238, 255 };
 
-    /* Draw order: stock/magazine first, body, then the barrel-ish part, then the hand on
-     * top. Overlapping convex parts sorted back-to-front avoids needing a depth-correct
-     * merged mesh, which we cannot afford to rebuild per frame. */
+    /* 繪製順序：先槍托／彈匣，再槍身，然後是槍管類零件，最後才是疊在最上層的手。把互相
+     * 疊合的凸零件由後往前排序，就能避開「必須使用深度正確的合併網格」這件事 —— 那種
+     * 網格我們負擔不起每個畫面重建一次。 */
     rlSetMatrixModelview(vmXform);
     draw_vm_part(d->vm_part_c, d->vm_scale, ident, tint);
     draw_vm_part(d->vm_part_b, d->vm_scale, ident, tint);
     draw_vm_part(d->vm_body,   d->vm_scale, ident, tint);
 
-    /* muzzle flash sprite in viewmodel space, additive */
+    /* 視圖模型空間中的槍口火花貼圖，以加性混合繪製 */
     if (g_fx.muzzle_flash > 0.02f)
     {
         Vector3 mz = Vector3Add(base, d->vm_muzzle);
@@ -823,7 +832,7 @@ void bp_weapons_draw_viewmodel(Camera3D cam, float speed01)
         rlSetBlendMode(RL_BLEND_ALPHA);
     }
 
-    /* reload indicator arc drawn in the same ortho space so it tracks the gun exactly */
+    /* 裝填指示弧畫在同一套正交空間裡，才能精確貼合槍身 */
     if (g_weapons.state == WSTATE_RELOADING)
     {
         rlPopMatrix();

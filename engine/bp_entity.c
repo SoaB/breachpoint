@@ -27,7 +27,7 @@ void bp_pool_reset(bp_pool *p)
     p->count = 0;
     p->iter_count = 0;
 
-    /* Slot 0 is permanently reserved so BP_NULL_HANDLE is never a live entity. */
+    /* 槽位 0 被永久保留，因此 BP_NULL_HANDLE 永遠不會對應到一個存活的實體。 */
     p->generations[0] = 0;
     p->alive[0] = 0;
 
@@ -52,7 +52,7 @@ bp_handle bp_pool_alloc(bp_pool *p)
     bp_handle h;
     h.index = idx;
     h.generation = p->generations[idx];
-    if (h.generation == 0) h.generation = 1;   /* avoid colliding with NULL_HANDLE */
+    if (h.generation == 0) h.generation = 1;   /* 避免與 NULL_HANDLE 撞在一起 */
     p->generations[idx] = h.generation;
     return h;
 }

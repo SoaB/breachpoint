@@ -1,19 +1,16 @@
 /******************************************************************************************
- * bp_game.c -- scene machine, fixed-step loop, level lifecycle.
+ * bp_game.c -- 場景狀態機、固定步進迴圈、關卡生命週期。
  *
- * BOOT IS STAGED, ONE SUBSYSTEM PER FRAME
- *   Assets, audio and graphics each take long enough to matter (procedural texture
- *   generation is tens of milliseconds; the world bake is more). Doing all of it inside one
- *   function before the first EndDrawing() would show the player a frozen black window with
- *   an OS "not responding" hint on desktop and a blank canvas on the web. Instead bp_game
- *   advances one boot stage per frame, so the loading bar is real: it is literally reporting
- *   which subsystem just came up.
+ * 開機流程分階段進行，每個畫面只初始化一個子系統
+ *   Asset、音訊與繪圖各自都耗時到不容忽視（程序化材質生成要數十毫秒；世界烘焙則更久）。
+ *   若把這些全塞進同一個函式、並在第一次 EndDrawing() 之前完成，玩家會看到一個凍結的
+ *   黑色視窗 —— 桌機上還附帶作業系統的「沒有回應」提示，Web 上則是一片空白畫布。因此
+ *   bp_game 每個畫面只推進一個開機階段，讓載入條是真的：它確實在回報哪個子系統剛剛啟動。
  *
- * WHO CALLS WHOM
- *   main.c calls bp_game_frame(frameDt) once per rendered frame and nothing else. Everything
- *   below -- how many simulation steps run, which scene ticks, when the UI draws -- is
- *   decided here. That single entry point is why the whole game can be driven headlessly
- *   from a test harness.
+ * 誰呼叫誰
+ *   main.c 每個繪製畫面呼叫一次 bp_game_frame(frameDt)，除此之外別無其他。底下所有事情
+ *   —— 要跑幾個模擬步、哪個場景要更新、UI 何時繪製 —— 都在這裡決定。正因為只有這一個
+ *   進入點，整個遊戲才能從測試框架中被無頭（headless）驅動。
  ******************************************************************************************/
 #include "bp_game.h"
 
@@ -48,9 +45,9 @@ static inline Color mc_game(float r, float g, float b, float a)
                     (unsigned char)BP_CLAMP((int)b, 0, 255), (unsigned char)BP_CLAMP((int)a, 0, 255) };
 }
 
-/* Menu action ids. Duplicated from bp_menu.c on purpose: bp_menu owns building its rows and
- * bp_game owns acting on them, and sharing an enum would make the menu header a dependency
- * of the game's control flow. The values are asserted at boot (see sanity_check_ids). */
+/* 選單動作 id。刻意與 bp_menu.c 重複一份：bp_menu 負責建構列，bp_game 負責對列做出反應，
+ * 若共用同一個 enum，會讓選單的標頭檔變成遊戲控制流程的依賴。這些值在開機時會做斷言檢查
+ * （見 sanity_check_ids）。 */
 enum {
     GA_PLAY = 1, GA_LEVELS, GA_OPTIONS, GA_CONTROLS, GA_CREDITS, GA_QUIT,
     GA_RESUME, GA_RESTART, GA_ABORT,
@@ -60,28 +57,28 @@ enum {
     GA_BIND_BASE  = 200
 };
 
-/* boot stages: declared in the header because the self-test reports the count */
+/* 開機階段：因為自我測試（self-test）需要回報階段數量，所以宣告於標頭檔中 */
 
 #define INTRO_CARD_TIME   3.0f
 #define DEAD_TO_RESULTS   2.2f
-#define ORBIT_SPEED       6.5f      /* degrees per second for the menu camera */
+#define ORBIT_SPEED       6.5f      /* 選單環繞相機的角速度（度／秒） */
 
 /* -------------------------------------------------------------------------------------- */
-/* forward declarations                                                                    */
+/* 前置宣告                                                                                  */
 /* -------------------------------------------------------------------------------------- */
 static void simulate_step(float dt);
 static void render_frame(void);
 static void enter_scene(bp_scene s);
 static void update_attract_camera(float dt);
 
-/* Implemented in bp_menu.c. The options screen edits FOV through a float mirror because the
- * slider row type works on floats while the profile stores an int; these two thunks keep
- * bp_game from reaching into another translation unit's statics. */
+/* 實作於 bp_menu.c。選項畫面透過浮點鏡像變數來編輯 FOV，因為滑桿列型別以浮點運作，而玩家
+ * 設定儲存的是整數；這兩個轉接函式（thunk）讓 bp_game 不必伸手去碰另一個編譯單元的 static
+ * 變數。 */
 float bp_menu_fov_mirror(void);
 void  bp_menu_rebuild_current(void);
 
 /* -------------------------------------------------------------------------------------- */
-/* scene helpers                                                                           */
+/* 場景輔助函式                                                                              */
 /* -------------------------------------------------------------------------------------- */
 static inline bool scene_is_menu(bp_scene s)
 {
@@ -99,7 +96,7 @@ static void banner_for_scene(bp_scene s)
         case SCENE_LEVEL_INTRO:
         {
             int i = BP_CLAMP(g_game.level_index, 0, BP_MAX(g_level_count - 1, 0));
-            bp_menu_open(MENU_SCREEN_NONE);      /* close any menu */
+            bp_menu_open(MENU_SCREEN_NONE);      /* 關閉任何已開啟的選單 */
             g_menu.screen = MENU_SCREEN_NONE;
             bp_hud_banner(g_levels[i].display_name, g_levels[i].subtitle, INTRO_CARD_TIME);
             bp_hud_toast(TextFormat("DIFFICULTY: %s",
@@ -134,8 +131,8 @@ static void enter_scene(bp_scene s)
 
         case SCENE_LEVEL_INTRO:
             bp_menu_close();
-            /* The cursor stays captured through the intro card so the first wave does not
-             * begin with the player hunting for the window. */
+            /* 游標在開場資訊卡期間維持被擷取（captured）的狀態，如此第一波開始時，玩家才
+             * 不會還得先去找視窗。 */
             bp_input_capture(true);
             bp_audio_set_intensity(0.30f, 0.8f);
             break;
@@ -171,7 +168,7 @@ static void enter_scene(bp_scene s)
 }
 
 /* -------------------------------------------------------------------------------------- */
-/* level lifecycle                                                                         */
+/* 關卡生命週期                                                                              */
 /* -------------------------------------------------------------------------------------- */
 static void reset_run_stats(void)
 {
@@ -208,8 +205,8 @@ void bp_game_start_level(int levelIndex)
     Vector3 start = bp_world_player_start(&startYaw);
     bp_player_reset(start, startYaw);
 
-    /* Starting kit: the sidearm plus whatever the level's first weapon trigger hands out.
-     * Giving a full arsenal at wave 1 would remove the reason to fight for pickups. */
+    /* 起始裝備：隨身副武器，再加上關卡中第一個武器觸發器所給的東西。若在第一波就給滿整座
+     * 軍火庫，就會抹去為了撿拾而戰的理由。 */
     bp_weapons_give(WPN_ID_PISTOL, g_weapon_table[WPN_ID_PISTOL].mag_size * 2, true);
 
     g_save.settings.last_level = levelIndex;
@@ -228,8 +225,8 @@ void bp_game_start_level(int levelIndex)
 
 void bp_game_restart_level(void)
 {
-    /* A restart keeps the run score: the player earned it, and wiping it would make "retry"
-     * feel like a punishment for dying rather than a second chance. */
+    /* 重新開始會保留這一輪的分數：那是玩家自己挣來的，若清掉會讓「重試」感覺像是在為死亡
+     * 受罰，而不是獲得第二次機會。 */
     int keepScore = g_player.score;
     int keepKills = g_player.kills;
     g_game.deaths_this_run = 0;
@@ -254,8 +251,8 @@ void bp_game_return_to_title(void)
     bp_fx_reset();
     bp_audio_set_intensity(0.20f, 1.0f);
 
-    /* Keep the last level loaded as the attract-mode backdrop: reloading costs a frame hitch
-     * and buys nothing, since the menu camera only ever orbits whatever is there. */
+    /* 保留最後一個關卡作為「展示模式（attract mode）」的背景：重新載入只會造成一次畫面
+     * 頓挫，卻沒有任何好處，因為選單相機只會環繞現有的場景。 */
     enter_scene(SCENE_TITLE);
 }
 
@@ -270,11 +267,11 @@ void bp_game_request_quit(void)
 }
 
 /* -------------------------------------------------------------------------------------- */
-/* results                                                                                 */
+/* 結算                                                                                      */
 /* -------------------------------------------------------------------------------------- */
 void bp_game_submit_run(bool victory)
 {
-    if (g_game.submitted) return;      /* exactly once per level: a retry must not double-count */
+    if (g_game.submitted) return;      /* 每個關卡只結算一次：重試不能重複計分 */
     g_game.submitted = true;
 
     float time = g_engine.time_total - g_game.level_start_time;
@@ -301,7 +298,7 @@ void bp_game_submit_run(bool victory)
 }
 
 /* -------------------------------------------------------------------------------------- */
-/* menu actions                                                                            */
+/* 選單動作                                                                                  */
 /* -------------------------------------------------------------------------------------- */
 void bp_game_apply_menu_action(int action)
 {
@@ -349,7 +346,7 @@ void bp_game_apply_menu_action(int action)
 
         case GA_APPLY:
         {
-            /* Push the FOV mirror back into the profile, then apply everything live. */
+            /* 把 FOV 鏡像變數寫回玩家設定，然後即時套用所有設定。 */
             g_save.settings.fov = BP_CLAMP((int)(bp_menu_fov_mirror() + 0.5f), 70, 120);
             bp_save_apply_settings();
             bp_save_write_settings();
@@ -398,19 +395,19 @@ void bp_game_apply_menu_action(int action)
             }
             else if (from == MENU_SCREEN_QUIT) bp_menu_open(MENU_SCREEN_TITLE);
             else if (from == MENU_SCREEN_PAUSE) enter_scene(SCENE_PLAYING);
-            else if (from == MENU_SCREEN_RESULTS) { /* results is a terminal screen */ }
+            else if (from == MENU_SCREEN_RESULTS) { /* 結算畫面是終端畫面 */ }
             break;
 
         default:
             if (action >= GA_LEVEL_BASE && action < GA_LEVEL_BASE + SAVE_MAX_LEVELS)
                 bp_game_start_level(action - GA_LEVEL_BASE);
-            /* GA_BIND_BASE rows are consumed inside bp_menu (key capture), never here. */
+            /* GA_BIND_BASE 開頭的列由 bp_menu 內部（按鍵擷取）消耗，不會進到這裡。 */
             break;
     }
 }
 
 /* -------------------------------------------------------------------------------------- */
-/* pause / debug toggles handled outside the menu                                          */
+/* 在選單之外處理的暫停／除錯切換                                                             */
 /* -------------------------------------------------------------------------------------- */
 static void handle_global_input(void)
 {
@@ -427,8 +424,8 @@ static void handle_global_input(void)
             enter_scene(SCENE_PAUSED);
             return;
         }
-        /* F1-style HUD toggle lives on the scoreboard action's neighbour: reuse SCOREBOARD
-         * long-press is too clever, so bind it to the debug overlay's second key slot. */
+        /* 類 F1 的 HUD 切換放在計分板動作的隔壁：用長按 SCOREBOARD 來觸發太取巧了，因此把
+         * 它綁在除錯覆蓋層的第二個按鍵欄位。 */
         if (IsKeyPressed(KEY_H))
         {
             g_hud.visible = !g_hud.visible;
@@ -455,18 +452,18 @@ static void handle_global_input(void)
 }
 
 /* -------------------------------------------------------------------------------------- */
-/* simulation                                                                              */
+/* 模擬                                                                                      */
 /* -------------------------------------------------------------------------------------- */
 static void handle_combat_input(void)
 {
-    /* ADS is published here rather than inside bp_weapons so that exactly one place decides
-     * what "aim" means; the weapon code only consumes the flag. */
+    /* ADS（瞄準）狀態在此發布，而非在 bp_weapons 內部，好讓「瞄準」是什麼只由一個地方決定；
+     * 武器程式碼只負責消費這個旗標。 */
     g_weapons.ads_held = bp_down(ACT_ALT_FIRE);
 
     if (bp_pressed(ACT_RELOAD)) bp_weapons_try_reload();
 
-    /* Direct slot selection, then cycling. Slot keys win over the wheel so a player who
-     * binds 1-5 never has their intent overridden by an accidental scroll. */
+    /* 先處理直接選擇武器欄位，再處理循環切換。欄位鍵優先於滾輪，如此綁定 1～5 的玩家，其
+     * 意圖永遠不會被意外滾動滑鼠滾輪所覆蓋。 */
     bool slotPressed = false;
     for (int i = 0; i < WPN_ID_COUNT; i++)
     {
@@ -485,8 +482,8 @@ static void handle_combat_input(void)
         else if (wheel < -0.05f) bp_weapons_cycle(-1);
     }
 
-    /* Fire. Auto weapons read the held state; semi-autos read the edge. Passing both lets
-     * bp_weapons decide, which is where the full_auto flag already lives. */
+    /* 開火。全自動武器讀取「持續按住」狀態；半自動武器讀取「本畫面剛按下」的邊緣。兩者都
+     * 傳入，交由 bp_weapons 決定，因為 full_auto 旗標本來就住在那裡。 */
     bp_weapons_try_fire(bp_down(ACT_FIRE), bp_pressed(ACT_FIRE));
 }
 
@@ -518,14 +515,14 @@ static void simulate_step(float dt)
             bp_waves_update(dt);
             bp_audio_update(dt);
 
-            /* pickup feedback the HUD wants to know about immediately */
+            /* HUD 想立刻得知的拾取回饋 */
             if (g_player.secret_reached && !g_game.secret_this_level)
             {
                 g_game.secret_this_level = true;
                 bp_hud_toast("SECRET FOUND  +500", TOAST_GOOD, 2.4f);
             }
 
-            /* state transitions */
+            /* 狀態轉換 */
             if (g_player.state == PST_DYING || g_player.state == PST_DEAD)
             {
                 if (g_player.state == PST_DEAD) enter_scene(SCENE_DEAD);
@@ -539,14 +536,14 @@ static void simulate_step(float dt)
         }
 
         case SCENE_LEVEL_INTRO:
-            /* The world keeps ticking (movers, triggers, particles) but nothing spawns and
-             * the player does not move: the intro card is a moment to read the arena. */
+            /* 世界持續運作（移動平台、觸發器、粒子），但不會生成任何東西，玩家也不會移動：
+             * 開場資訊卡是讓玩家閱讀場地的一個片刻。 */
             bp_world_update(dt);
             bp_fx_update(dt, vec3y(g_world.bounds_min.y));
             bp_audio_update(dt);
             bp_camera_simulate(dt, g_player.pos, 0.0f, true, false, 0.0f);
             if (g_game.scene_time >= INTRO_CARD_TIME) enter_scene(SCENE_PLAYING);
-            /* Or let an impatient player skip it. Skipping must not skip the wave start. */
+            /* 或者讓沒耐心的玩家跳過。跳過時絕不能連帶跳過該波次的開始。 */
             else if (bp_pressed(ACT_MENU_ACCEPT) || bp_pressed(ACT_FIRE))
                 enter_scene(SCENE_PLAYING);
             break;
@@ -556,8 +553,8 @@ static void simulate_step(float dt)
             bp_world_update(dt);
             bp_fx_update(dt, vec3y(g_world.bounds_min.y));
             bp_audio_update(dt);
-            /* The death cam keeps orbiting slowly rather than freezing: a static frame reads
-             * as a hang, a drifting one reads as a camera. */
+            /* 死亡運鏡持續緩慢環繞而非凍結：靜止的畫面讀起來像是當機，緩慢漂移的則像是
+             * 一台攝影機。 */
             g_camera.yaw += dt * 9.0f;
             if (g_game.scene_time >= DEAD_TO_RESULTS)
             {
@@ -571,8 +568,8 @@ static void simulate_step(float dt)
             bp_fx_update(dt, vec3y(g_world.bounds_min.y));
             bp_audio_update(dt);
             update_attract_camera(dt);
-            /* LEVEL_COMPLETE advances once the player has seen the tally; RESULTS waits for
-             * an explicit menu choice. */
+            /* LEVEL_COMPLETE 在玩家看過結算統計後就前進；RESULTS 則會等待玩家明確的選單
+             * 選擇。 */
             if (g_game.scene == SCENE_LEVEL_COMPLETE && g_game.scene_time > 1.2f &&
                 bp_pressed(ACT_MENU_ACCEPT))
                 bp_game_next_level();
@@ -585,14 +582,14 @@ static void simulate_step(float dt)
             break;
 
         case SCENE_PAUSED:
-            /* Simulation is frozen -- that is the definition of pause -- and so is the view.
-             * Orbiting the camera while paused would look like the game is still running. */
+            /* 模擬被凍結 —— 這就是暫停的定義 —— 視角也一樣。暫停時還讓相機環繞，會看起來
+             * 像遊戲仍在運行。 */
             bp_audio_update(dt);
             break;
 
         case SCENE_TITLE:
-            /* The title screen orbits whatever level is loaded, so the menu always has a
-             * real arena behind it instead of a flat colour. */
+            /* 標題畫面環繞著目前已載入的關卡，因此選單背後永遠是一座真實的競技場，而不是
+             * 一片單色。 */
             bp_audio_update(dt);
             update_attract_camera(dt);
             break;
@@ -604,12 +601,11 @@ static void simulate_step(float dt)
 }
 
 /*
- * Menu backdrop camera: a slow orbit around the arena centre, high enough to read the layout.
+ * 選單背景相機：繞著競技場中心緩慢環繞，高度足以看清整體佈局。
  *
- * Running the real camera through its normal path (rather than assigning g_camera.cam
- * directly) matters: bp_camera_render() applies shake, roll and FOV smoothing, so the menu
- * backdrop inherits exactly the same rendering contract as gameplay and cannot drift out of
- * sync when those systems change.
+ * 讓真正的相機走它正常的流程（而不是直接指派 g_camera.cam）很重要：bp_camera_render()
+ * 會套用震動（shake）、側傾（roll）與 FOV 平滑，因此選單背景與遊戲進行會繼承完全相同的
+ * 渲染契約，當這些系統變動時，兩者也不可能失去同步。
  */
 static void update_attract_camera(float dt)
 {
@@ -626,9 +622,8 @@ static void update_attract_camera(float dt)
     float yawRad = g_game.orbit_yaw * BP_DEG2RAD;
     Vector3 pos = { c.x + sinf(yawRad) * radius, c.y + 11.0f, c.z + cosf(yawRad) * radius };
 
-    /* The camera looks at the centre from outside it, so yaw points inward: +180 from the
-     * orbit angle. Pitch is derived from the height difference, not authored, so changing the
-     * orbit height cannot accidentally point the camera at the floor. */
+    /* 相機從外部看向中心，因此 yaw 指向內側：在環繞角度上 +180 度。pitch 是由高度差推導
+     * 而來，而非手動指定的，所以就算調整環繞高度，也不可能不小心讓相機朝向地板。 */
     g_camera.yaw = g_game.orbit_yaw + 180.0f;
     float dy = c.y + 1.5f - pos.y;
     float hd = BP_MAX(radius, 0.001f);
@@ -638,7 +633,7 @@ static void update_attract_camera(float dt)
 }
 
 /* -------------------------------------------------------------------------------------- */
-/* render                                                                                  */
+/* 繪製                                                                                      */
 /* -------------------------------------------------------------------------------------- */
 static void draw_boot_screen(void)
 {
@@ -661,8 +656,8 @@ static void draw_boot_screen(void)
 
 static void draw_intro_card(void)
 {
-    /* The name card is drawn by the HUD banner; here we only add the difficulty line and a
-     * "press fire to skip" prompt once the card has been up long enough to be read. */
+    /* 名稱資訊卡是由 HUD 橫幅繪製的；這裡只負責在資訊卡顯示夠久、足以被閱讀之後，補上
+     * 難度那行，以及一句「按開火鍵跳過」的提示。 */
     if (g_game.scene_time > 1.0f)
         bp_ui_text_align((float)UI_VW * 0.5f, (float)UI_VH - 44.0f, UI_FS_TINY, UI_ALIGN_CENTER,
                    g_assets.pal_text_dim, "CLICK TO DEPLOY");
@@ -674,12 +669,14 @@ static void render_frame(void)
 
     bp_gfx_begin_scene();
 
-    /* One interpolated camera for the whole frame. Every draw below uses this exact value,
-     * so there is no possibility of the world and the viewmodel disagreeing by a frame. */
+    /* 整個畫面只使用一台經過插值的相機。底下每一次繪製都使用這同一個值，因此世界與武器
+     * 視角模型（viewmodel）不可能出現相差一個畫面的不一致。 */
     Camera3D cam = bp_camera_render(g_game.alpha);
 
     if (g_world.loaded)
     {
+        BeginMode3D(cam);
+
         bp_world_draw_sky(cam);
         bp_world_draw(cam, cam.position);
 
@@ -689,28 +686,31 @@ static void render_frame(void)
         bp_pickup_draw(cam, viewer);
         bp_fx_draw(cam);
 
-        /* The viewmodel is a separate orthographic pass inside the same 3D frame; it must be
-         * drawn last so it cannot be occluded by world geometry. */
-        if (g_game.scene == SCENE_PLAYING || g_game.scene == SCENE_LEVEL_INTRO ||
-            g_game.scene == SCENE_PAUSED)
-            bp_weapons_draw_viewmodel(cam, bp_player_speed01());
-
         if (g_engine.perf.show_overlay)
         {
             bp_world_draw_debug();
             bp_enemy_draw_debug();
             bp_player_draw_debug();
         }
+
+        EndMode3D();
+
+        /* 武器視角模型是一道獨立的正交（orthographic）繪製流程，刻意放在 EndMode3D 之後，
+         * 這樣它的自訂投影才不會受到世界 3D 相機影響。它必須最後繪製，才不會被世界幾何
+         * 遮擋。 */
+        if (g_game.scene == SCENE_PLAYING || g_game.scene == SCENE_LEVEL_INTRO ||
+            g_game.scene == SCENE_PAUSED)
+            bp_weapons_draw_viewmodel(cam, bp_player_speed01());
     }
 
     bp_gfx_end_scene();
 
-    /* raylib 5.5 deliberately does not expose a draw-call counter through its public API
-     * (rlgl keeps one internally but publishes no accessor), so the overlay reports what can
-     * actually be measured: FPS, wall time per frame, and our own sim/draw timers. Reporting
-     * a fabricated draw-call number would be worse than reporting none. */
+    /* raylib 5.5 刻意不透過公開 API 提供繪製呼叫次數（draw-call counter）的計數器
+     * （rlgl 內部有保留一個，但沒有公開存取子），因此這個覆蓋層只回報真正能測量到的東西：
+     * FPS、每畫面的實際耗時，以及我們自己的模擬／繪製計時器。回報一個捏造出來的繪製呼叫
+     * 次數，會比乾脆不回報更糟。 */
 
-    /* ---- UI: after the scene resolve, at native resolution ---- */
+    /* ---- UI：在場景解析（resolve）之後，以原生解析度繪製 ---- */
     bp_ui_begin_frame();
 
     switch (g_game.scene)
@@ -728,8 +728,8 @@ static void render_frame(void)
 
         case SCENE_DEAD:
         {
-            /* Death: desaturating vignette + the one line the player needs ("you died, and
-             * here is what it cost"). No menu -- the transition is automatic and short. */
+            /* 死亡：去飽和的暗角 + 玩家唯一需要的那一行（「你死了，代價是這些」）。
+             * 不放選單 —— 這個轉場是自動且短暫的。 */
             float k = BP_CLAMP(g_game.scene_time / 0.6f, 0.0f, 1.0f);
             bp_ui_dim(0.30f * k);
             bp_ui_vgradient(0.0f, 0.0f, (float)UI_VW, (float)UI_VH,
@@ -763,7 +763,7 @@ static void render_frame(void)
 }
 
 /* -------------------------------------------------------------------------------------- */
-/* boot                                                                                    */
+/* 開機                                                                                      */
 /* -------------------------------------------------------------------------------------- */
 static void boot_stage(int stage)
 {
@@ -778,9 +778,9 @@ static void boot_stage(int stage)
             bp_input_init();
             break;
         case BOOT_ASSETS:
-            /* The single slowest boot stage: every texture, model and glyph atlas in the game
-             * is generated here. It logs its own per-group timings, so a slow machine can be
-             * diagnosed from the console without a profiler. */
+            /* 整個開機流程中最慢的單一階段：遊戲中每一張材質、每一個模型與字型圖集
+             * （glyph atlas）都在此生成。它會記錄各分組的耗時，因此就算沒有效能分析器，
+             * 也能從主控台診斷出是哪台機器太慢。 */
             snprintf(g_game.boot_status, sizeof(g_game.boot_status), "GENERATING TEXTURES");
             bp_assets_init();
             break;
@@ -828,8 +828,8 @@ static void boot_stage(int stage)
         case BOOT_HUD:
             snprintf(g_game.boot_status, sizeof(g_game.boot_status), "HUD");
             bp_hud_init();
-            /* The debug overlay flag is a setting, not a HUD default: restore it here, after
-             * bp_save_init() has run, so a developer's saved preference survives a restart. */
+            /* 除錯覆蓋層旗標是一項設定，而非 HUD 的預設值：在這裡還原它（在
+             * bp_save_init() 執行之後），好讓開發者儲存過的偏好設定能撐過重新啟動。 */
             g_engine.perf.show_overlay = g_save.settings.show_fps;
             break;
         case BOOT_MENU:
@@ -837,8 +837,8 @@ static void boot_stage(int stage)
             bp_menu_init();
             break;
         case BOOT_LEVEL:
-            /* Load level 0 as the attract-mode backdrop. This is the slowest single stage
-             * (geometry bake), so it is last and gets its own frame. */
+            /* 載入第 0 關作為展示模式的背景。這是（幾何烘焙中）最慢的單一階段，因此排
+             * 在最後，並獨占一個畫面。 */
             snprintf(g_game.boot_status, sizeof(g_game.boot_status), "BUILDING %s",
                      g_level_count > 0 ? g_levels[0].display_name : "ARENA");
             bp_world_load(0);
@@ -866,38 +866,38 @@ static void boot_tick(void)
         return;
     }
 
-    /* Runs exactly once. Without this guard the tail re-executes on every subsequent frame:
-     * it would re-enter SCENE_TITLE forever (so the attract camera and banner never
-     * progress), re-log "boot complete" every frame, and -- worst -- re-enable event waiting
-     * and override any caller that deliberately asked for polling, such as --selftest. */
+    /* 只會執行一次。少了這道防護，這個尾段會在之後每一個畫面重新執行：它會永遠重新進入
+     * SCENE_TITLE（導致展示相機與橫幅永遠無法推進）、每個畫面都重新記錄一次「boot
+     * complete」，而且最糟的是，它會重新啟用事件等待（event waiting），覆蓋掉任何刻意
+     * 要求輪詢（polling）的呼叫端，例如 --selftest。 */
     g_game.boot_done = true;
     g_game.boot_progress = 1.0f;
 
     /*
-     * Deliberately does NOT enable event waiting here.
+     * 這裡刻意「不」啟用事件等待。
      *
-     * bp_game_frame() is called between BeginDrawing() and EndDrawing(), so anything it does
-     * to the window's blocking mode takes effect in *this* frame's EndDrawing(). Enabling it
-     * here means the very frame that finishes boot is the first one that can park forever in
-     * PollInputEvents on a display that delivers no events -- which is exactly how a
-     * headless or unfocused window hangs with a fully-initialised game and no output.
+     * bp_game_frame() 是在 BeginDrawing() 與 EndDrawing() 之間被呼叫的，因此它對視窗
+     * 阻塞模式（blocking mode）所做的任何事，都會在「本畫面」的 EndDrawing() 中生效。
+     * 在此啟用它的話，完成開機的那一個畫面就會成為第一個可能在 PollInputEvents 中永遠
+     * 停駐的畫面（在一個不遞送任何事件的顯示器上）—— 這正是無頭視窗或失去焦點的視窗，
+     * 在遊戲已完整初始化卻毫無輸出的情況下會卡死的原因。
      *
-     * Blocking on the event queue is a presentation concern, so main() decides it: it flips
-     * g_engine.event_wait_allowed once boot is done and calls bp_apply_event_wait() outside
-     * the frame bracket. See bp_engine::event_wait_allowed.
+     * 在事件佇列上阻塞屬於「呈現（presentation）」的範疇，因此交由 main() 決定：開機完成
+     * 後它會翻轉 g_engine.event_wait_allowed，並在畫面區段之外呼叫 bp_apply_event_wait()。
+     * 詳見 bp_engine::event_wait_allowed。
      */
     enter_scene(SCENE_TITLE);
     BP_LOGI("game: boot complete in %.2fs", (double)g_engine.time_total);
 }
 
 /* -------------------------------------------------------------------------------------- */
-/* frame                                                                                   */
+/* 畫面（frame）                                                                             */
 /* -------------------------------------------------------------------------------------- */
 void bp_game_frame(float frameDt)
 {
-    /* Clamp twice: the caller is supposed to, and a backgrounded tab will hand us a
-     * multi-second delta anyway. Without this the accumulator tries to run hundreds of
-     * catch-up steps and the game locks up exactly when the player comes back. */
+    /* 夾限兩次：呼叫端本來就應該夾限，而且被切到背景的分頁無論如何都會丟給我們一個好幾秒
+     * 的 delta。少了這道手續，累加器會試圖追趕數百個模擬步，遊戲就會在玩家切回來的那一刻
+     * 卡死。 */
     if (!(frameDt > 0.0f)) frameDt = SIM_DT;
     if (frameDt > MAX_FRAME_DT) frameDt = MAX_FRAME_DT;
 
@@ -909,17 +909,16 @@ void bp_game_frame(float frameDt)
 
     bp_input_begin_frame();
 
-    /* Virtual input is layered on *after* real polling and *before* the simulation steps, so
-     * a self-test or a replay can drive the game without the OS keyboard agreeing with it.
-     * begin_frame() derives held/pressed from physical state, which would otherwise erase
-     * anything injected from outside the frame. See bp_input.h. */
+    /* 虛擬輸入是在真實輪詢「之後」、模擬步「之前」疊加上去的，因此自我測試或重播可以
+     * 驅動遊戲，而不必讓作業系統的鍵盤與之一致。begin_frame() 會從實體狀態推導出
+     * held/pressed，若沒有這道疊加，它會抹除任何從畫面外部注入的輸入。詳見 bp_input.h。 */
     bp_input_apply_virtual();
 
     if (!g_game.boot_done)
     {
         boot_tick();
-        /* Still let the renderer breathe: begin/end frame so the loading bar actually paints
-         * instead of the window staying blank until boot finishes. */
+        /* 仍要讓渲染器喘口氣：開始／結束畫面，讓載入條真的能畫出來，而不是等到開機完成前
+         * 視窗都維持空白。 */
         bp_gfx_begin_scene();
         bp_gfx_end_scene();
         render_frame();
@@ -929,7 +928,7 @@ void bp_game_frame(float frameDt)
 
     handle_global_input();
 
-    /* Menus are frame-rate driven, not simulation driven: see bp_menu.c. */
+    /* 選單由畫面更新率驅動，而非由模擬驅動：詳見 bp_menu.c。 */
     if (bp_menu_is_open())
     {
         int action = bp_menu_update(frameDt);
@@ -937,7 +936,7 @@ void bp_game_frame(float frameDt)
         else if (action > 0) bp_game_apply_menu_action(action);
     }
 
-    /* ---- fixed timestep ---- */
+    /* ---- 固定時間步進（fixed timestep） ---- */
     float timeScale = BP_CLAMP(g_engine.time_scale, 0.0f, 2.0f);
     g_game.accumulator += frameDt * timeScale;
     g_game.sim_steps = 0;
@@ -949,16 +948,16 @@ void bp_game_frame(float frameDt)
         g_game.accumulator -= SIM_DT;
         steps++;
     }
-    /* If we hit the step cap, discard the backlog rather than falling further behind. This
-     * is the "spiral of death" guard: a machine that cannot keep up drops simulation time
-     * instead of consuming every frame trying to repay a debt it cannot afford. */
+    /* 若達到步數上限，就丟棄積壓的工作，而不是愈落愈後。這是「死亡螺旋（spiral of
+     * death）」的防護：跟不上速度的機器會直接捨棄模擬時間，而不是把每個畫面都用來償還
+     * 一筆它還不起的債。 */
     if (g_game.accumulator > SIM_DT * (float)MAX_SIM_STEPS_PER_FRAME) g_game.accumulator = 0.0f;
     g_game.alpha = BP_CLAMP(g_game.accumulator / SIM_DT, 0.0f, 1.0f);
 
     g_engine.perf.sim_steps = steps;
 
-    /* ---- HUD is frame-driven: its smoothing must match the display rate, not the sim rate,
-     * or a 240 Hz player sees a jitterier health bar than a 60 Hz one. ---- */
+    /* ---- HUD 由畫面驅動：它的平滑處理必須配合顯示更新率，而非模擬更新率，否則 240 Hz
+     * 的玩家會看到比 60 Hz 玩家更抖動的血條。 ---- */
     if (g_game.scene == SCENE_PLAYING || g_game.scene == SCENE_LEVEL_INTRO ||
         g_game.scene == SCENE_PAUSED || g_game.scene == SCENE_DEAD)
         bp_hud_update(frameDt);
@@ -968,7 +967,7 @@ void bp_game_frame(float frameDt)
 }
 
 /* -------------------------------------------------------------------------------------- */
-/* init / shutdown                                                                         */
+/* 初始化 / 關閉                                                                            */
 /* -------------------------------------------------------------------------------------- */
 void bp_game_init(void)
 {

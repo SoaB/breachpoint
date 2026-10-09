@@ -1,19 +1,17 @@
 /******************************************************************************************
- * bp_weapons.h -- the weapon bank: stats, fire/reload state machine, hitscan, projectiles
- *                 and the first person viewmodel.
+ * bp_weapons.h -- 武器庫：數值、開火／換彈狀態機、hitscan、彈體與第一人稱 viewmodel。
  *
- * DATA DRIVEN BY DESIGN
- *   Every number a designer would want to tune lives in assets/cfg/weapons.cfg. The compiled
- *   in table in bp_weapons.c is the *fallback* used when the file is missing, so the game
- *   never fails to boot because an asset did not ship. Rebalancing a weapon is a text edit
- *   and a page reload in the web build -- no rebuild.
+ * 刻意採用資料驅動
+ *   設計師想調的每一個數字都放在 assets/cfg/weapons.cfg。bp_weapons.c 裡那份編譯進去的
+ *   表格只是檔案「遺失時的後備（fallback）」，如此一來，就算某個 asset 忘了隨包附上，
+ *   遊戲也永遠開得起來。重新平衡一把武器，只要改文字檔、在網頁版再重新整理一次 —— 不必
+ *   重新編譯。
  *
- * WHY BOTH HITSCAN AND PROJECTILES
- *   Hitscan is the correct model for fast weapons: the player's intent at the instant of the
- *   click is what matters, and any travel time reads as input lag. Projectiles are the
- *   correct model for the rocket launcher: leading a moving target is a skill, and splash
- *   damage needs a position to arrive at. The bank therefore contains both, and the combat
- *   resolution is shared (see bp_hitdetect.h) so the two can never disagree about a hit.
+ * 為何同時需要 hitscan 與彈體
+ *   對快速武器而言，hitscan 才是正確的模型：重要的是玩家按下那一瞬間的意圖，任何飛行時間
+ *   都會被感覺成輸入延遲（input lag）。對火箭發射器而言，彈體才是正確的模型：預判移動
+ *   目標是一門技術，而爆炸傷害也需要一個「可以抵達的位置」。因此武器庫兩者兼備，且傷害
+ *   結算共用同一套（見 bp_hitdetect.h），兩者永遠不可能對「有沒有打中」給出不同答案。
  ******************************************************************************************/
 #ifndef BP_WEAPONS_H
 #define BP_WEAPONS_H
@@ -76,7 +74,7 @@ typedef struct {
     float            headshot_mult;
     Color            color;
 
-    /* projectile only */
+    /* 只有彈體武器才會用到的欄位 */
     float            proj_speed;
     float            proj_radius;
     float            proj_gravity;
@@ -85,13 +83,13 @@ typedef struct {
     float            blast_self;
     float            blast_knockback;
 
-    /* viewmodel */
+    /* 第一人稱視圖模型（viewmodel） */
     bp_model_id      vm_body;
     bp_model_id      vm_part_b;
     bp_model_id      vm_part_c;
     Vector3          vm_offset;
     Vector3          vm_scale;
-    Vector3          vm_muzzle;      /* muzzle position in viewmodel space */
+    Vector3          vm_muzzle;      /* 槍口在 viewmodel 座標系中的位置 */
 } bp_weapon_def;
 
 typedef struct {
@@ -100,7 +98,7 @@ typedef struct {
     float    age;
     float    life;
     float    damage;
-    float    radius;         /* blast radius */
+    float    radius;         /* 爆炸半徑 */
     float    body_radius;
     float    gravity;
     float    knockback;
@@ -131,23 +129,23 @@ typedef struct {
     int           reserve[WPN_ID_COUNT];
 
     bp_weapon_id  current;
-    bp_weapon_id  pending;          /* weapon being switched to */
+    bp_weapon_id  pending;          /* 正在切換過去的那把武器 */
     bp_weapon_state state;
     float         state_time;
     float         cooldown;
     float         reload_progress;
     float         switch_progress;
 
-    /* feel */
+    /* 手感 */
     float         spread_current;
     float         recoil_viewmodel;
-    float         ads;              /* 0 hip .. 1 aimed */
+    float         ads;              /* 0 = 腰射（hip） .. 1 = 瞄準（aimed） */
     bool          ads_held;
     float         sway_x, sway_y;
     float         bob_phase;
     float         dry_fire_time;
 
-    /* stats */
+    /* 統計 */
     int           shots_fired;
     int           shots_hit;
     int           headshots;
@@ -179,8 +177,8 @@ void  bp_weapons_add_reserve_all(int amount);
 void  bp_weapons_draw_viewmodel(Camera3D cam, float speed01);
 void  bp_weapons_draw_projectiles(Camera3D cam);
 
-/* current-state queries used by the HUD and the AI (they need to know if the player is
- * mid-reload to decide whether to push) */
+/* 供 HUD 與 AI 使用的「目前狀態」查詢（它們需要知道玩家是否正在換彈，以決定要不要壓上來
+ * 進攻） */
 const bp_weapon_def *bp_weapons_current_def(void);
 bool   bp_weapons_busy(void);
 float  bp_weapons_reload_fraction(void);
@@ -189,7 +187,7 @@ int    bp_weapons_total_reserve(void);
 float  bp_weapons_accuracy(void);
 bool   bp_weapons_owns(bp_weapon_id id);
 
-/* projectiles can also be spawned by enemies */
+/* 彈體也可以由敵方生成 */
 void   bp_projectile_spawn(Vector3 pos, Vector3 dir, float speed, float damage,
                            float radius, float blastRadius, bool fromPlayer, Color color,
                            bp_model_id model, bp_handle owner);

@@ -1,13 +1,13 @@
 /******************************************************************************************
- * bp_ui.c -- immediate-mode UI implementation.
+ * bp_ui.c -- 即時模式（immediate-mode）UI 的實作。
  *
- * Two invariants every function here upholds:
- *   1. Pixel snapping. Every coordinate goes through snap() before it reaches a draw call,
- *      and every glyph scale is an integer. A UI that is 1 subpixel off is a UI that looks
- *      cheap, and it is invisible in a screenshot but obvious in motion.
- *   2. No allocation. Text goes through a fixed stack buffer (UI_TEXT_BUF). Longer strings
- *      are truncated rather than growing the buffer -- the HUD has no business rendering a
- *      novel, and a truncation is a visible bug while a heap allocation is an invisible one.
+ * 這裡每個函式都守住兩條不變式（invariant）：
+ *   1. 像素對齊（pixel snapping）。任何座標在抵達繪圖呼叫之前都會經過 snap()，而且每個字
+ *      形的縮放倍率都是整數。差一個次像素（subpixel）的 UI 看起來就是廉價的 UI —— 它在靜
+ *      態截圖裡幾乎看不出來，但在畫面移動時一覽無遺。
+ *   2. 不做動態配置。文字一律走固定的堆疊緩衝區（UI_TEXT_BUF）。過長的字串會被截斷，而不是
+ *      把緩衝區長大 —— HUD 沒有理由去排版一整本小說，而且截斷是看得見的 bug，堆疊配置失敗
+ *      卻是看不見的。
  ******************************************************************************************/
 #include "bp_ui.h"
 
@@ -25,7 +25,7 @@ bp_ui g_ui = { 0 };
 #define UI_SCROLL_LAMBDA 14.0f
 
 /* -------------------------------------------------------------------------------------- */
-/* coordinate mapping                                                                      */
+/* 座標映射                                                                                  */
 /* -------------------------------------------------------------------------------------- */
 static inline float snapf(float v) { return floorf(v + 0.5f); }
 static inline int   snapi(float v) { return (int)floorf(v + 0.5f); }
@@ -37,8 +37,8 @@ void bp_ui_resize(void)
     g_ui.win_w = GetScreenWidth();
     g_ui.win_h = GetScreenHeight();
 
-    /* Integer scale, minimum 1. On a 3840x2160 monitor this is exactly 6, and the 5x7 font
-     * renders as a 30x42 bitmap -- crisp, because no filtering is involved anywhere. */
+    /* 整數縮放，下限為 1。在 3840x2160 螢幕上這個值正好是 6，5x7 字型會被畫成 30x42 的點
+     * 陣圖 —— 因為全程沒有任何取樣過濾介入，所以格外銳利。 */
     int s = BP_MIN(g_ui.win_w / UI_VW, g_ui.win_h / UI_VH);
     g_ui.scale = BP_MAX(1, s);
 
@@ -59,19 +59,17 @@ Vector2 bp_ui_mouse_virtual(void)
 }
 
 /* -------------------------------------------------------------------------------------- */
-/* font selection                                                                          */
+/* 字型選擇                                                                                  */
 /* -------------------------------------------------------------------------------------- */
 typedef struct { Font *font; int scale; float size; } ui_font_pick;
 
 /*
- * Map a requested virtual pixel size onto (bitmap font, integer scale).
+ * 把請求的虛擬像素大小對應到（點陣字型，整數縮放倍率）。
  *
- * The four generated fonts have base sizes 7, 14, 28, 56. Choosing the *largest base that
- * does not exceed the request* and then scaling it by an integer keeps every glyph a whole
- * number of device pixels. Requesting 21px therefore yields font_main (14) x 1 = 14px or
- * font_big (28) x 1 = 28px; we take the smaller and let the caller ask for 28 if they want
- * the bigger step. Sizes are intentionally coarse -- a bitmap font has no business being
- * asked for 17px.
+ * 產生出來的四種字型基準大小分別是 7、14、28、56。作法是「挑一個不大於請求值的最大基準大
+ * 小」，再乘上整數倍率，如此每個字形都落在完整的裝置像素上。因此請求 21px 會得到
+ * font_main (14) x 1 = 14px 或 font_big (28) x 1 = 28px；這裡取較小的一個，呼叫端若想要
+ * 更大的階級就自行請求 28。字級刻度刻意粗糙 —— 要求點陣字型畫出 17px 毫無意義。
  */
 static ui_font_pick pick_font(float size)
 {
@@ -107,12 +105,11 @@ static ui_font_pick pick_font(float size)
 float bp_ui_text_height(float size) { return pick_font(size).size; }
 
 /*
- * Text width, computed from the font's own advance table.
+ * 文字寬度，直接由字型自己的前進量表（advance table）算出。
  *
- * We deliberately do NOT call MeasureTextEx(): it multiplies the advance by a float ratio
- * (fontSize / baseSize) and applies fractional letter spacing, which will not match what
- * DrawTextEx actually rasterises once we have snapped the size. Measuring and drawing must
- * share one code path or centred text drifts a pixel at a time.
+ * 刻意不呼叫 MeasureTextEx()：它會把前進量乘上一個浮點比例（fontSize / baseSize），再套用
+ * 小數字距，這與我們把大小對齊之後 DrawTextEx 真正光柵化的結果對不上。量測與繪製必須共用
+ * 同一條程式路徑，否則置中的文字會一次偏移一個像素。
  */
 float bp_ui_text_width(const char *text, float size)
 {
@@ -145,7 +142,7 @@ static void draw_text_at(float vx, float vy, float size, Color c, const char *te
 
     if (!p.font || !p.font->texture.id)
     {
-        /* Last-resort fallback so a font generation failure is legible rather than silent. */
+        /* 最後手段的後備路徑：讓字型產生失敗時仍然「看得見」，而不是無聲無息地消失。 */
         DrawText(text, (int)sx, (int)sy, BP_MAX(8, snapi(p.size)), c);
         return;
     }
@@ -178,11 +175,11 @@ void bp_ui_text_align(float x, float y, float size, bp_ui_align a, Color c, cons
 }
 
 /*
- * Shadowed text: the same string drawn twice, offset by exactly one font pixel.
+ * 帶陰影的文字：同一個字串畫兩次，偏移正好一個字型像素。
  *
- * A 1px offset (not 2px, not a blur) is what keeps a bitmap font readable over bright
- * level geometry without making the text look outlined. Blur would require a second pass
- * and a filter, and filters are precisely what this font must not have.
+ * 1px（不是 2px、也不是模糊）的偏移，正是讓點陣字型壓在明亮的關卡場景上仍然可讀、又不會
+ * 看起來像加上外框的關鍵。模糊需要第二次繪製加一次過濾，而過濾恰恰是這套字型絕不能有的
+ * 東西。
  */
 void bp_ui_text_shadow(float x, float y, float size, bp_ui_align a, Color c, Color shadow, const char *fmt, ...)
 {
@@ -244,7 +241,7 @@ void bp_ui_text_wrapped(float x, float y, float maxWidth, float size, Color c, c
 }
 
 /* -------------------------------------------------------------------------------------- */
-/* shapes                                                                                  */
+/* 圖形                                                                                      */
 /* -------------------------------------------------------------------------------------- */
 void bp_ui_rect(float x, float y, float w, float h, Color c)
 {
@@ -287,10 +284,10 @@ void bp_ui_vgradient(float x, float y, float w, float h, Color top, Color bottom
 }
 
 /*
- * Panel: a dark fill with a 1px border and a subtle top highlight.
+ * 面板（panel）：深色填色、1px 邊框，再加一道細微的頂部高光。
  *
- * The highlight is the detail that makes a flat rectangle read as a physical plate rather
- * than a hole in the screen. It costs one extra 1px rect.
+ * 正是這道高光，讓平面矩形讀起來像一塊實體鈑件，而不是畫面上的一個洞。代價只是多畫一個
+ * 1px 的矩形。
  */
 void bp_ui_panel(float x, float y, float w, float h, Color fill, Color border)
 {
@@ -299,8 +296,8 @@ void bp_ui_panel(float x, float y, float w, float h, Color fill, Color border)
     bp_ui_rect(x + 1.0f, y + 1.0f, w - 2.0f, 1.0f, (Color){ 255, 255, 255, 18 });
 }
 
-/* Panel with a chamfered top-left corner. Used for the HUD plates so the interface has a
- * machined look consistent with the level geometry's bevelled edges. */
+/* 左上角帶斜切（chamfer）的面板。HUD 的鈑件使用它，讓介面帶有機械加工的質感，與關卡場景
+ * 的斜角邊緣保持一致。 */
 void bp_ui_panel_notch(float x, float y, float w, float h, float notch, Color fill, Color border)
 {
     bp_ui_rect(x + notch, y, w - notch, h, fill);
@@ -308,11 +305,11 @@ void bp_ui_panel_notch(float x, float y, float w, float h, float notch, Color fi
     if (border.a > 0)
     {
         float t = 1.0f;
-        bp_ui_rect(x + notch, y, w - notch, t, border);                 /* top */
-        bp_ui_rect(x, y + h - t, w, t, border);                         /* bottom */
-        bp_ui_rect(x, y + notch, t, h - notch, border);                 /* left */
-        bp_ui_rect(x + w - t, y, t, h, border);                         /* right */
-        bp_ui_line(x, y + notch, x + notch, y, t, border);              /* chamfer */
+        bp_ui_rect(x + notch, y, w - notch, t, border);                 /* 上 */
+        bp_ui_rect(x, y + h - t, w, t, border);                         /* 下 */
+        bp_ui_rect(x, y + notch, t, h - notch, border);                 /* 左 */
+        bp_ui_rect(x + w - t, y, t, h, border);                         /* 右 */
+        bp_ui_line(x, y + notch, x + notch, y, t, border);              /* 斜切角 */
     }
     bp_ui_rect(x + notch + 1.0f, y + 1.0f, w - notch - 2.0f, 1.0f, (Color){ 255, 255, 255, 16 });
 }
@@ -329,8 +326,8 @@ void bp_ui_bar(float x, float y, float w, float h, float frac, Color fill, Color
     bp_ui_rect(x, y, w, h, back);
     if (frac > 0.0f) bp_ui_rect(x + 1.0f, y + 1.0f, (w - 2.0f) * frac, h - 2.0f, fill);
     if (border.a > 0) bp_ui_rect_outline(x, y, w, h, 1.0f, border);
-    /* gloss line: a 1px lighter strip along the top of the fill. Without it a bar reads as
-     * a flat colour block rather than a gauge. */
+    /* 光澤線（gloss）：沿著填色頂緣的一條 1px 淺色帶。少了它，長條會被看成一塊平面色塊，
+     * 而不是一個儀表。 */
     if (frac > 0.02f)
         bp_ui_rect(x + 1.0f, y + 1.0f, (w - 2.0f) * frac, 1.0f,
                    (Color){ (unsigned char)BP_MIN(255, fill.r + 60),
@@ -340,11 +337,10 @@ void bp_ui_bar(float x, float y, float w, float h, float frac, Color fill, Color
 }
 
 /*
- * Segmented bar: the health/armour readout.
+ * 分段式長條：生命／護甲的讀值。
  *
- * Segments are drawn as discrete cells rather than as a continuous fill with tick marks on
- * top, so the player can count "how many segments am I on" without reading a number. That
- * is the whole reason a numeric HUD also has a bar.
+ * 每一段畫成獨立的格子，而不是「連續填色再在上面加刻度」，如此玩家不必去讀數字，光用數
+ * 的就知道「自己現在剩幾格」。這正是數值型 HUD 仍然需要一根長條的全部理由。
  */
 void bp_ui_bar_segmented(float x, float y, float w, float h, float frac, int segments,
                          Color fill, Color back, Color border)
@@ -364,8 +360,7 @@ void bp_ui_bar_segmented(float x, float y, float w, float h, float frac, int seg
         if (i < lit) bp_ui_rect(cx, y + 1.0f, cellW, h - 2.0f, fill);
         else bp_ui_rect(cx, y + 1.0f, cellW, h - 2.0f, (Color){ fill.r, fill.g, fill.b, 34 });
     }
-    /* Partial cell: the remainder between lit segments, so the bar still reads smoothly
-     * for values that are not an exact multiple of a segment. */
+    /* 部分格：補上已亮格與下一格之間的餘數，如此數值不是整數格時，長條讀起來依然連續。 */
     float partial = frac * (float)segments - (float)lit;
     if (lit < segments && partial > 0.02f)
     {
@@ -377,18 +372,17 @@ void bp_ui_bar_segmented(float x, float y, float w, float h, float frac, int seg
 
 void bp_ui_icon_diamond(float x, float y, float r, Color c)
 {
-    /* 4-sided polygon = a diamond, snapped to the pixel grid by drawing at the snapped
-     * centre. Used for score/secret markers, which must be recognisable at 12px. */
+    /* 邊數為 4 的多邊形＝菱形，以「對齊後的中心點」繪製來吸附到像素網格。用於分數／隱藏
+     * 要素的標記，這類圖示必須在 12px 大小時仍辨認得出來。 */
     Vector2 centre = { snapf(bp_ui_v2sx(x)), snapf(bp_ui_v2sy(y)) };
     DrawPoly(centre, 4, BP_MAX(1.0f, r * (float)g_ui.scale), 45.0f, c);
 }
 
 void bp_ui_crosshair(float x, float y, float gap, float len, float t, Color c, float hitMarker)
 {
-    /* The crosshair is the one UI element that must NOT be pixel-snapped relative to the
-     * virtual grid: it is snapped to the exact screen centre, which is where the 3D camera's
-     * centre ray projects. A crosshair one pixel off from the true centre means the gun does
-     * not shoot where you are looking, and players notice that instantly. */
+    /* 準星是唯一一個「不得」相對虛擬網格做像素對齊的 UI 元素：它對齊的是螢幕的正中央，也
+     * 就是 3D 相機中心射線（centre ray）投影的位置。只要偏離真正的中心一個像素，就代表槍
+     * 不會往你瞄的方向打，而玩家馬上就察覺得到。 */
     float cx = (float)g_ui.win_w * 0.5f;
     float cy = (float)g_ui.win_h * 0.5f;
     float s = (float)g_ui.scale;
@@ -399,14 +393,14 @@ void bp_ui_crosshair(float x, float y, float gap, float len, float t, Color c, f
     DrawRectangle((int)(cx - th * 0.5f), (int)(cy - g - l), (int)th, (int)l, c);
     DrawRectangle((int)(cx - th * 0.5f), (int)(cy + g),     (int)th, (int)l, c);
 
-    /* Centre dot: visible only when the spread is tight, so the dot itself communicates
-     * accuracy without needing a number anywhere. */
+    /* 中心點：只在散布（spread）夠小時才顯示，於是這個點本身就傳達了精準度，不必再在畫面
+     * 某處放一個數字。 */
     if (gap < 3.2f) DrawRectangle((int)(cx - 1), (int)(cy - 1), 2, 2, c);
 
     if (hitMarker > 0.01f)
     {
-        /* Hit marker: four ticks that close on the centre as the marker fades. Reading the
-         * confirmation as motion rather than as a blink is what makes it legible mid-fight. */
+        /* 命中標記：四條刻度隨著標記淡出而向中心收攏。把這次確認讀成「位移」而非「閃爍」，
+         * 正是它在戰鬥正酣時依然清楚可辨的原因。 */
         float m = 3.0f + 9.0f * hitMarker;
         float a = hitMarker * 255.0f;
         Color mc = (Color){ 255, 255, 255, (unsigned char)BP_CLAMP((int)a, 0, 255) };
@@ -419,7 +413,7 @@ void bp_ui_crosshair(float x, float y, float gap, float len, float t, Color c, f
 }
 
 /* -------------------------------------------------------------------------------------- */
-/* scrollbars                                                                              */
+/* 捲軸                                                                                      */
 /* -------------------------------------------------------------------------------------- */
 void bp_ui_scroll_region(float x, float y, float w, float h)
 {
@@ -434,8 +428,8 @@ void bp_ui_scroll_begin(float contentHeight, float viewHeight)
     float maxScroll = BP_MAX(0.0f, contentHeight - viewHeight);
     g_ui.scroll_target = BP_CLAMP(g_ui.scroll_target - g_input.wheel * 18.0f, 0.0f, maxScroll);
 
-    /* Smoothed so a wheel notch glides instead of jumping: a list that jumps 18px per notch
-     * is unreadable, and a list that glides too slowly feels broken. */
+    /* 加以平滑，讓滾輪轉一格是「滑過去」而不是「跳過去」：每格就跳 18px 的清單根本沒法
+     * 讀，滑得太慢的清單又會讓人覺得它壞了。 */
     g_ui.scroll_current = bp_damp(g_ui.scroll_current, g_ui.scroll_target, UI_SCROLL_LAMBDA, GetFrameTime());
     if (BP_ABS(g_ui.scroll_current - g_ui.scroll_target) < 0.05f) g_ui.scroll_current = g_ui.scroll_target;
 
@@ -450,7 +444,7 @@ void bp_ui_scroll_end(void)
 float bp_ui_scroll_offset(void) { return -g_ui.scroll_current; }
 
 /* -------------------------------------------------------------------------------------- */
-/* colour helpers                                                                          */
+/* 色彩輔助                                                                                  */
 /* -------------------------------------------------------------------------------------- */
 Color bp_ui_fade(Color c, float alpha01)
 {
@@ -470,7 +464,7 @@ Color bp_ui_mix(Color a, Color b, float t)
 }
 
 /* -------------------------------------------------------------------------------------- */
-/* frame / cursor                                                                          */
+/* 畫面 / 游標                                                                               */
 /* -------------------------------------------------------------------------------------- */
 void bp_ui_init(void)
 {
@@ -491,7 +485,7 @@ void bp_ui_begin_frame(void)
 void bp_ui_end_frame(void)
 {
     g_ui.in_frame = false;
-    g_input.wheel = 0.0f;      /* consume the wheel so only one scroller sees it */
+    g_input.wheel = 0.0f;      /* 消耗掉滾輪輸入，整頁只有一個捲動區看得到它 */
 }
 
 void bp_ui_set_align(bp_ui_align a) { g_ui.align = a; }

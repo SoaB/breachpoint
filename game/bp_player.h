@@ -1,18 +1,17 @@
 /******************************************************************************************
- * bp_player.h -- the player body: movement, health/armour, pickups, and the game's feel.
+ * bp_player.h -- 玩家軀體：移動、生命／護甲、拾取物，以及整款遊戲的手感。
  *
- * MOVEMENT MODEL
- *   Acceleration-based with separate ground and air constants, plus friction that is applied
- *   only to the component of velocity *opposing* the input. Consequences the player feels:
- *     - releasing keys stops you fast (friction), but you keep momentum through a turn
- *     - air control is limited but real, so a mid-air correction is possible but cannot
- *       reverse a jump
- *     - strafing in a circle builds speed above the straight-line cap (the classic
- *       "circle-strafe is faster" property that makes arena movement a skill). We allow a
- *       hard speed cap far above the ground cap so this is expressive, not broken.
+ * 移動模型
+ *   以加速度為基礎，地面與空中各有自己的常數；摩擦力只施加在「與輸入方向相反」的那個速度
+ *   分量上。玩家實際感受到的後果：
+ *     - 離開按鍵會很快停下來（摩擦力），但轉彎途中仍保有動量
+ *     - 空中操控有限但確實存在，所以空中可以修正，卻無法反轉一整段跳躍
+ *     - 繞圈橫移能把速度堆到直線奔跑上限之上（經典的「circle-strafe 比直線快」性質，正是
+ *       競技場移動之所以成為一門技術的原因）。我們刻意允許一個遠高於地面速度上限的硬上限，
+ *       讓這種技巧成為自我表達的空間，而不是破壞平衡的漏洞。
  *
- *   Crouch is a height change plus a speed penalty, NOT a separate collision shape. One
- *   shape means one resolution path means no crouch-jump-through-ceiling exploits.
+ *   蹲下只是「高度改變 + 速度懲罰」，而不是另一套碰撞形狀。只有一種形狀，就只有一條解算
+ *   路徑，也就沒有「蹲下跳穿過天花板」這類漏洞。
  ******************************************************************************************/
 #ifndef BP_PLAYER_H
 #define BP_PLAYER_H
@@ -48,18 +47,18 @@ typedef enum {
 } bp_player_state;
 
 typedef struct {
-    /* body */
-    Vector3 pos;          /* feet */
+    /* 身體 */
+    Vector3 pos;          /* 腳部位置 */
     Vector3 vel;
     float   yaw;
     bool    on_ground;
     bool    crouched;
     bool    crouch_held;
-    float   crouch_amount;   /* 0 standing .. 1 crouched, drives eye height + hitbox */
+    float   crouch_amount;   /* 0 = 站立 .. 1 = 全蹲，驅動視線高度與命中框 */
     float   height;
     float   radius;
 
-    /* vitals */
+    /* 生命指標 */
     float   health;
     float   armor;
     float   max_health;
@@ -69,7 +68,7 @@ typedef struct {
     float   invuln_time;
     float   hazard_time;
 
-    /* movement feel */
+    /* 移動手感 */
     float   speed_ground;
     float   speed_sprint;
     float   speed_crouch;
@@ -87,15 +86,15 @@ typedef struct {
     float   speed_current;
     float   speed_peak;
 
-    /* feedback */
+    /* 回饋 */
     float   damage_flash;
     float   heal_flash;
-    float   last_damage_dir;     /* radians relative to view yaw, for the damage indicator */
+    float   last_damage_dir;     /* 相對視角 yaw 的弧度，供傷害方向指示器使用 */
     float   last_damage_time;
     Vector3 last_damage_source;
     float   low_health_beep;
 
-    /* score */
+    /* 分數 */
     int     score;
     int     kills;
     int     streak;
@@ -104,15 +103,15 @@ typedef struct {
     int     pickups_taken;
     float   time_alive;
 
-    /* level progression. The player controller owns trigger contact, so it is the one
-     * place that can legitimately raise these; the game layer polls them and decides
-     * what a level exit or a secret actually means. Both are sticky per level. */
+    /* 關卡進度。玩家控制器獨佔與觸發器的接觸，因此只有這裡有資格把這兩個旗標立起來；遊戲
+     * 層只是輪詢它們，再自行判定「出口」與「隱藏要素」到底代表什麼。兩者在單一關卡內都是
+     * 黏著的（sticky），一旦設立就不會中途清除。 */
     bool    exit_reached;
-    float   exit_time;          /* g_engine.time_total when the exit was touched */
+    float   exit_time;          /* 觸碰到出口當下的 g_engine.time_total */
     bool    secret_reached;
-    float   fall_speed_peak;    /* fastest downward speed this level, for the stats screen */
+    float   fall_speed_peak;    /* 本關最快的向下速度，供戰績畫面使用 */
 
-    /* pickups */
+    /* 拾取物 */
     bp_pickup pickups[MAX_PICKUPS];
     int       pickup_count;
 
@@ -137,7 +136,7 @@ bool    bp_player_alive(void);
 float   bp_player_speed01(void);
 bool    bp_player_on_ground(void);
 
-/* pickups */
+/* 拾取物 */
 void    bp_pickup_spawn(bp_pickup_kind kind, Vector3 pos, float amount, int weaponId);
 void    bp_pickup_update(float dt);
 void    bp_pickup_draw(Camera3D cam, Vector3 viewer);
