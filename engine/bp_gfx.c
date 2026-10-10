@@ -16,30 +16,48 @@ bp_gfx g_gfx = { 0 };
 #if defined(PLATFORM_WEB) || defined(GRAPHICS_API_OPENGL_ES2)
     #define BP_GLSL_HEADER "#version 100\n"
     #define BP_PRECISION   "precision mediump float;\n"
+    #define BP_VS_IN       "attribute"
+    #define BP_VS_OUT      "varying"
+    #define BP_FS_IN       "varying"
+    #define BP_FS_OUT_DECL ""                  /* GLSL 100 內建 gl_FragColor */
+    #define BP_FS_OUT_NAME "gl_FragColor"
 #else
     #define BP_GLSL_HEADER "#version 330\n"
     #define BP_PRECISION   ""
+    #define BP_VS_IN       "in"
+    #define BP_VS_OUT      "out"
+    #define BP_FS_IN        "in"
+    #define BP_FS_OUT_DECL "out vec4 fragColor;\n"
+    #define BP_FS_OUT_NAME "fragColor"
 #endif
 
 static const char *s_post_vs =
     BP_GLSL_HEADER
-    "attribute vec3 vertexPosition;\n"
-    "attribute vec2 vertexTexCoord;\n"
-    "varying vec2 fragTexCoord;\n"
+    BP_VS_IN " vec3 vertexPosition;\n"
+    BP_VS_IN " vec2 vertexTexCoord;\n"
+    BP_VS_OUT " vec2 fragTexCoord;\n"
+    "uniform mat4 mvp;\n"
     "void main() {\n"
     "    fragTexCoord = vertexTexCoord;\n"
-    "    gl_Position = vec4(vertexPosition, 1.0);\n"
+    "    gl_Position = mvp*vec4(vertexPosition, 1.0);\n"
     "}\n";
 
-/* 注意：raylib 只會為「預設」著色器程式自動前置它自己的頂點著色器 uniform 變數；自訂
- * 著色器必須自行宣告所有需要的變數。這裡我們使用一個未經變換（untransformed）的全螢幕
- * 四邊形（透過 DrawTexturePro 綁定此著色器來繪製），因此上面的頂點著色器只是把 NDC
- * （正規化裝置座標）位置直接透傳出去。 */
+/* 與 raylib 著色器的「合約」：
+ *   - raylib 的批次繪製把 2D 頂點以「像素座標」送進著色器，再由各著色器自行以
+ *     mvp（model-view-projection）矩陣轉換到裁剪空間。raylib 會在著色器載入時
+ *     以標準名稱（"mvp"、"texture0"、"vertexPosition"、"vertexTexCoord"…）
+ *     查詢 uniform／attribute 位置，並在每個批次繪製前上傳 mvp——但前提是
+ *     著色器「自己宣告」這些變數。缺了 mvp 的 passthrough 著色器會把
+ *     (0..1280, 0..720) 的像素座標直接當成 NDC 輸出，整個解析四邊形落到
+ *     裁剪體之外——什麼都不會被光柵化，症狀是畫面全黑但 HUD 仍在。
+ *   - 桌機版（GL 3.3 core）必須用 in/out 與自訂 fragment 輸出變數；
+ *     WebGL 1（GLSL 100）則是 attribute/varying 與內建 gl_FragColor。 */
 
 static const char *s_post_fs =
     BP_GLSL_HEADER
     BP_PRECISION
-    "varying vec2 fragTexCoord;\n"
+    BP_FS_IN " vec2 fragTexCoord;\n"
+    BP_FS_OUT_DECL
     "uniform sampler2D texture0;\n"
     "uniform float uTime;\n"
     "uniform float uDamage;\n"
@@ -93,7 +111,7 @@ static const char *s_post_fs =
     "    col = col / (1.0 + col * 0.28);\n"
     "    col = pow(col, vec3(0.94));\n"
     "\n"
-    "    gl_FragColor = vec4(col, 1.0);\n"
+    "    " BP_FS_OUT_NAME " = vec4(col, 1.0);\n"
     "}\n";
 
 /* -------------------------------------------------------------------------------------- */

@@ -98,6 +98,32 @@
 
 static int selftest_frames = 0;
 
+/* 迴圈結尾那一幀做一次像素讀回，量測「3D 場景真的有解析到畫面上」。
+ * 見 run_selftest() 裡的對應斷言。 */
+static bool  s_pixel_capture_wanted = false;
+static float s_frame_mean_rgb = -1.0f;
+static float s_frame_nonblack = -1.0f;
+
+static void capture_frame_stats(void)
+{
+    rlDrawRenderBatchActive();          /* 讀回前先把批次清到 GL */
+    Image img = LoadImageFromScreen();
+    long n = (long)img.width * (long)img.height;
+    long sum = 0, nonblack = 0;
+    for (long p = 0; p < n; p++)
+    {
+        const unsigned char *px = (const unsigned char *)img.data + p * 4;
+        sum += px[0] + px[1] + px[2];
+        if (px[0] + px[1] + px[2] > 24) nonblack++;
+    }
+    s_frame_mean_rgb = n > 0 ? (float)sum / (float)(n * 3) : 0.0f;
+    s_frame_nonblack = n > 0 ? (float)nonblack / (float)n : 0.0f;
+    UnloadImage(img);
+    BP_LOGI("selftest: framebuffer readback %.0fx%.0f, mean %.1f, non-black %.1f%%",
+            (double)img.width, (double)img.height, (double)s_frame_mean_rgb,
+            (double)(s_frame_nonblack * 100.0f));
+}
+
 static void selftest_frame(void)
 {
     selftest_frames++;
@@ -179,6 +205,7 @@ static void selftest_frame(void)
     BeginDrawing();
     ClearBackground(BLACK);
     bp_game_frame(SELFTEST_DT);
+    if (s_pixel_capture_wanted) { s_pixel_capture_wanted = false; capture_frame_stats(); }
     EndDrawing();
 
 }
@@ -193,6 +220,7 @@ static int run_selftest(int frames)
     double t0 = GetTime();
     for (int i = 0; i < frames && !g_engine.quit_requested; i++)
     {
+        s_pixel_capture_wanted = (i == frames - 1);   /* 最後一幀做像素讀回量測 */
         selftest_frame();
         if ((i % 120) == 119)
         {
@@ -233,6 +261,14 @@ static int run_selftest(int frames)
     CHECK(g_game.total_time > 0.0f,    "simulated %.1fs of game time in %d frames", (double)g_game.total_time, selftest_frames);
     CHECK(g_engine.perf.fps > 0,       "frame rate measured at %d fps", g_engine.perf.fps);
     CHECK(g_game.sim_steps > 0,        "fixed-step loop ran (last frame: %d steps)", g_game.sim_steps);
+
+    /* 渲染斷言：場景目標必須真的被解析（resolve）到畫面上。後製著色器的頂點路徑
+     * 曾經把 raylib 的「像素座標」直接當成裁剪空間座標輸出，導致整個解析四邊形
+     * 落在 NDC 之外——模擬側一切正常、畫面卻全黑。模擬資料看不到這種 bug，
+     * 唯一的偵測手段就是讀回真正的像素。 */
+    CHECK(s_frame_mean_rgb > 15.0f && s_frame_nonblack > 0.15f,
+          "3D world resolved to the framebuffer (mean %.1f, %.0f%% non-black)",
+          (double)s_frame_mean_rgb, (double)(s_frame_nonblack * 100.0f));
 
     /* 碰撞 bug 會先以「掉出世界」的形式現身，遠早於它變成人類會回報的任何症狀，
      * 所以這是此處最便宜、價值也最高的斷言。 */

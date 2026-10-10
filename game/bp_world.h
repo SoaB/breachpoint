@@ -20,14 +20,14 @@
 #ifndef BP_WORLD_H
 #define BP_WORLD_H
 
-#include "bp_common.h"
 #include "../engine/bp_assets.h"
-#include "../engine/bp_math.h"
 #include "../engine/bp_audio.h"
+#include "../engine/bp_common.h"
+#include "../engine/bp_math.h"
 
-#define MAX_SOLIDS    512
-#define MAX_TRIGGERS  192
-#define MAX_MOVERS     32
+#define MAX_SOLIDS 512
+#define MAX_TRIGGERS 192
+#define MAX_MOVERS 32
 
 /* -------------------------------------------------------------------------------------- */
 /* 材質                                                                                       */
@@ -54,18 +54,18 @@ typedef enum {
 } bp_material;
 
 typedef struct {
-    const char   *name;
+    const char* name;
     bp_texture_id texture;
-    int           impact_sfx;      /* 以 int 存放的 bp_sfx_id：讓 audio 標頭檔不必出現在這裡 */
-    int           step_sfx;
-    float         uv_scale;        /* 一整次貼圖重複所佔的世界單位數                   */
-    float         friction;        /* 1.0 = 一般地面                                   */
-    float         hardness;        /* 0..1，用來縮放碎片與火花的數量                    */
-    bool          penetrable;      /* 子彈與 hitscan 可直接穿過                        */
-    bool          emissive;        /* 不受光照、直接繪製（unlit）                       */
-    bool          decals_allowed;
-    float         damage_to_player;/* 站在其上時每秒造成的傷害（危險地板）               */
-    Color         tint;
+    int impact_sfx; /* 以 int 存放的 bp_sfx_id：讓 audio 標頭檔不必出現在這裡 */
+    int step_sfx;
+    float uv_scale; /* 一整次貼圖重複所佔的世界單位數                   */
+    float friction; /* 1.0 = 一般地面                                   */
+    float hardness; /* 0..1，用來縮放碎片與火花的數量                    */
+    bool penetrable; /* 子彈與 hitscan 可直接穿過                        */
+    bool emissive; /* 不受光照、直接繪製（unlit）                       */
+    bool decals_allowed;
+    float damage_to_player; /* 站在其上時每秒造成的傷害（危險地板）               */
+    Color tint;
 } bp_material_def;
 
 /* -------------------------------------------------------------------------------------- */
@@ -73,26 +73,26 @@ typedef struct {
 /* -------------------------------------------------------------------------------------- */
 typedef struct {
     bp_aabb box;
-    int     material;
-    bool    dynamic;       /* 每幀重新繪製，不會被烘進靜態 mesh */
-    bool    shoot_through; /* hitscan 可穿過（鐵格板、力場），但軀體不行 */
-    bool    explode;       /* 油桶：可被傷害摧毀，並波及附近 */
-    float   health;        /* 只在 explode == true 時才會用到 */
-    bool    destroyed;
+    int material;
+    bool dynamic; /* 每幀重新繪製，不會被烘進靜態 mesh */
+    bool shoot_through; /* hitscan 可穿過（鐵格板、力場），但軀體不行 */
+    bool explode; /* 油桶：可被傷害摧毀，並波及附近 */
+    float health; /* 只在 explode == true 時才會用到 */
+    bool destroyed;
 } bp_solid;
 
 typedef struct {
-    bp_solid *solid;       /* 指向 g_world.solids 內部的元素 */
-    Vector3   from;
-    Vector3   to;
-    float     duration;
-    float     phase;       /* 0 = 全關 .. 1 = 全開 */
-    bool      open;
-    bool      triggered;
-    float     cooldown;
-    float     hold;          /* 完全打開後停留幾秒才自動闔上 */
-    float     auto_close;    /* 0 = 保持開啟，直到再次被觸發 */
-    int       sfx;
+    bp_solid* solid; /* 指向 g_world.solids 內部的元素 */
+    Vector3 from;
+    Vector3 to;
+    float duration;
+    float phase; /* 0 = 全關 .. 1 = 全開 */
+    bool open;
+    bool triggered;
+    float cooldown;
+    float hold; /* 完全打開後停留幾秒才自動闔上 */
+    float auto_close; /* 0 = 保持開啟，直到再次被觸發 */
+    int sfx;
 } bp_mover;
 
 /* -------------------------------------------------------------------------------------- */
@@ -112,63 +112,63 @@ typedef enum {
 } bp_trigger_kind;
 
 typedef struct {
-    int     kind;          /* bp_trigger_kind 列舉值 */
+    int kind; /* bp_trigger_kind 列舉值 */
     Vector3 position;
-    float   yaw;
-    int     param;         /* 武器 id / 拾取數量 / mover 索引 */
-    float   respawn;       /* 幾秒；0 表示只觸發一次 */
-    float   timer;
-    bool    consumed;
-    float   radius;
+    float yaw;
+    int param; /* 武器 id / 拾取數量 / mover 索引 */
+    float respawn; /* 幾秒；0 表示只觸發一次 */
+    float timer;
+    bool consumed;
+    float radius;
 } bp_trigger;
 
 /* -------------------------------------------------------------------------------------- */
 /* 烘焙的靜態 mesh                                                                            */
 /* -------------------------------------------------------------------------------------- */
 typedef struct {
-    Mesh      mesh;
-    Model     model;
-    Material  material;
-    int       material_index;
-    int       box_count;
-    int       tri_count;
-    bool      valid;
+    Mesh mesh;
+    Model model;
+    Material material;
+    int material_index;
+    int box_count;
+    int tri_count;
+    bool valid;
 } bp_static_batch;
 
 /* -------------------------------------------------------------------------------------- */
 /* 世界                                                                                       */
 /* -------------------------------------------------------------------------------------- */
 typedef struct {
-    char    id[32];
-    char    name[48];
-    char    subtitle[72];
-    int     level_index;
+    char id[32];
+    char name[48];
+    char subtitle[72];
+    int level_index;
 
-    bp_solid   solids[MAX_SOLIDS];
-    int        solid_count;
+    bp_solid solids[MAX_SOLIDS];
+    int solid_count;
 
     bp_trigger triggers[MAX_TRIGGERS];
-    int        trigger_count;
+    int trigger_count;
 
-    bp_mover   movers[MAX_MOVERS];
-    int        mover_count;
+    bp_mover movers[MAX_MOVERS];
+    int mover_count;
 
     bp_static_batch batch[MAT_COUNT];
-    int        batch_count;
+    int batch_count;
 
-    Vector3    bounds_min;
-    Vector3    bounds_max;
-    Vector3    player_start;
-    float      player_start_yaw;
+    Vector3 bounds_min;
+    Vector3 bounds_max;
+    Vector3 player_start;
+    float player_start_yaw;
 
-    Color      ambient;
-    Color      fog_color;
-    float      fog_density;
-    float      sky_yaw;
+    Color ambient;
+    Color fog_color;
+    float fog_density;
+    float sky_yaw;
 
-    float      build_ms;
-    int        spawn_enemy_count;
-    bool       loaded;
+    float build_ms;
+    int spawn_enemy_count;
+    bool loaded;
 } bp_world;
 
 extern bp_world g_world;
@@ -177,12 +177,12 @@ extern bp_world g_world;
 /* 關卡表                                                                                     */
 /* -------------------------------------------------------------------------------------- */
 typedef struct {
-    const char *id;
-    const char *display_name;
-    const char *subtitle;
-    int         waves;
-    float       par_time;
-    int         difficulty;
+    const char* id;
+    const char* display_name;
+    const char* subtitle;
+    int waves;
+    float par_time;
+    int difficulty;
 } bp_level_def;
 
 extern const bp_level_def g_levels[];
@@ -191,33 +191,33 @@ extern const int g_level_count;
 /* -------------------------------------------------------------------------------------- */
 /* 對外介面（API）                                                                            */
 /* -------------------------------------------------------------------------------------- */
-void  bp_world_init(void);
-void  bp_world_shutdown(void);
-bool  bp_world_load(int levelIndex);
-void  bp_world_unload(void);
-void  bp_world_update(float dt);
+void bp_world_init(void);
+void bp_world_shutdown(void);
+bool bp_world_load(int levelIndex);
+void bp_world_unload(void);
+void bp_world_update(float dt);
 
 /* 碰撞 */
-bool  bp_world_sweep(Vector3 from, Vector3 to, float radius,
-                     float *out_t, Vector3 *out_normal, const bp_solid **out_solid);
-bool  bp_world_resolve_body(Vector3 *feet, float radius, float height,
-                            Vector3 *velocity, bool *on_ground, int *out_material);
+bool bp_world_sweep(Vector3 from, Vector3 to, float radius,
+    float* out_t, Vector3* out_normal, const bp_solid** out_solid);
+bool bp_world_resolve_body(Vector3* feet, float radius, float height,
+    Vector3* velocity, bool* on_ground, int* out_material);
 float bp_world_floor_height(Vector3 pos, float radius, float max_y);
-bool  bp_world_point_solid(Vector3 p);
-bool  bp_world_line_of_sight(Vector3 from, Vector3 to);
-int   bp_world_material_at_point(Vector3 pos);
-int   bp_world_count_solids(void);
-const bp_solid *bp_world_solid(int index);
+bool bp_world_point_solid(Vector3 p);
+bool bp_world_line_of_sight(Vector3 from, Vector3 to);
+int bp_world_material_at_point(Vector3 pos);
+int bp_world_count_solids(void);
+const bp_solid* bp_world_solid(int index);
 
 /* 觸發器 */
-int     bp_world_next_spawn(int kind, int *cursor);
+int bp_world_next_spawn(int kind, int* cursor);
 Vector3 bp_world_random_spawn(int kind, Vector3 avoid, float min_distance);
-int     bp_world_spawn_count(int kind);
-Vector3 bp_world_player_start(float *out_yaw);
-void    bp_world_activate_doors(Vector3 pos, float radius);
+int bp_world_spawn_count(int kind);
+Vector3 bp_world_player_start(float* out_yaw);
+void bp_world_activate_doors(Vector3 pos, float radius);
 
 /* 材質 */
-const bp_material_def *bp_world_material(int index);
+const bp_material_def* bp_world_material(int index);
 
 /* 繪製 */
 void bp_world_draw_sky(Camera3D cam);

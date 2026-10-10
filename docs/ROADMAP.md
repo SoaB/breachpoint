@@ -15,7 +15,7 @@
 | 開機實測 | ✅ 0.22–0.27 s（16 階段，llvmpipe 軟體光柵化） |
 | 素材實測 | ✅ 30/30 貼圖、35/35 模型、字型 OK，330–424 ms |
 | 世界實測 | ✅ FOUNDRY：50 solids / 28 triggers / 1 mover / 13 spawns / 12 批次 / 516 三角形 |
-| 自我測試載具 | ✅ 17 項斷言，确定性 60 Hz，~12 s 牆鐘跑 30 s 模擬 |
+| 自我測試載具 | ✅ 18 項斷言，确定性 60 Hz，~12 s 牆鐘跑 30 s 模擬 |
 | **自我測試結果** | ❌ **6 項 FAIL**（見 §2） |
 | Web 建置 | ❌ 缺 `web/shell.html` |
 | 無 GL 單元測試 | ❌ 缺 `tests/test_systems.c` |
@@ -394,7 +394,7 @@ export DISPLAY=:99 LIBGL_ALWAYS_SOFTWARE=1
 
 - ✅ `Makefile` — native / release / web / test / cfg / clean / raylib / raylib-web
 - ✅ 零警告建置（`-Wall -Wextra -Wshadow -Wdouble-promotion -Wformat=2`）
-- ✅ 自我測試載具（17 項斷言、确定性 60 Hz、逐批計時、結束碼）
+- ✅ 自我測試載具（18 項斷言、确定性 60 Hz、逐批計時、結束碼）
 - ✅ `docs/` — ARCHITECTURE / DEVELOPMENT / GAMEPLAY_DATA / ROADMAP
 
 ### 這個過程中修掉的真 bug（不是測試 bug）

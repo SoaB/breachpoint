@@ -89,7 +89,7 @@ DISPLAY=:99 LIBGL_ALWAYS_SOFTWARE=1 ./build/breachpoint
 ./build/breachpoint --help
 ```
 
-`--selftest` 會用**合成輸入**驅動完整的真實帧迴圈（含 GL context、渲染器、場景機），然後斷言 17 項條件：開機完成、素材生成、關卡載入、敵人生成、武器擊發、波次推進、玩家未掉出世界、執行期間沒有 ERROR 級日誌……**結束碼 0 = 全過，1 = 有檢查失敗，2 = 開機失敗。**
+`--selftest` 會用**合成輸入**驅動完整的真實帧迴圈（含 GL context、渲染器、場景機），然後斷言 18 項條件：開機完成、素材生成、關卡載入、敵人生成、武器擊發、波次推進、玩家未掉出世界、**3D 場景真的解析到畫面上（像素讀回）**、執行期間沒有 ERROR 級日誌……**結束碼 0 = 全過，1 = 有檢查失敗，2 = 開機失敗。**
 
 ---
 
@@ -244,7 +244,7 @@ main.c
 | 世界／關卡／碰撞／烘焙 | ✅ 50 solids、28 triggers、12 靜態批次、516 三角形 |
 | 玩家移動、武器、敵人 AI、波次導演 | ✅ 編譯與單元層級就緒 |
 | HUD／選單／存檔／音訊 | ✅ |
-| `--selftest` 整合測試載具 | ✅ 17 項斷言，确定性 60 Hz 模擬 |
+| `--selftest` 整合測試載具 | ✅ 18 項斷言，确定性 60 Hz 模擬 |
 | **WebAssembly 建置** | ⚠️ Makefile 規則已就緒，但 `web/shell.html` 尚未撰寫 → `make web` 會失敗 |
 | **`make test`（無 GL 單元測試）** | ⚠️ `tests/test_systems.c` 尚未撰寫 |
 | **`make cfg`（設定嵌入）** | ⚠️ `tools/gen_cfg.py` 尚未撰寫 |

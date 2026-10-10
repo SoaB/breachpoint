@@ -28,67 +28,80 @@
 #ifndef BP_GAME_H
 #define BP_GAME_H
 
-#include "bp_common.h"
+#include "../engine/bp_common.h"
 
 typedef enum {
-    SCENE_BOOT = 0,       /* 只佔一幀：各子系統在此啟動                     */
-    SCENE_TITLE,          /* 主選單，背後是持續漂移的即時相機               */
-    SCENE_LEVEL_INTRO,    /* 區域名稱卡，世界已載入，玩家原地待命           */
-    SCENE_PLAYING,        /* 遊戲本體                                      */
-    SCENE_PAUSED,         /* 模擬凍結，選單仍可操作                        */
-    SCENE_DEAD,           /* 死亡鏡頭，接著進入結算                        */
-    SCENE_RESULTS,        /* 本局戰績總結                                  */
+    SCENE_BOOT = 0, /* 只佔一幀：各子系統在此啟動                     */
+    SCENE_TITLE, /* 主選單，背後是持續漂移的即時相機               */
+    SCENE_LEVEL_INTRO, /* 區域名稱卡，世界已載入，玩家原地待命           */
+    SCENE_PLAYING, /* 遊戲本體                                      */
+    SCENE_PAUSED, /* 模擬凍結，選單仍可操作                        */
+    SCENE_DEAD, /* 死亡鏡頭，接著進入結算                        */
+    SCENE_RESULTS, /* 本局戰績總結                                  */
     SCENE_LEVEL_COMPLETE, /* 抵達出口：統計，然後前往下一區或回選單        */
-    SCENE_GAME_COMPLETE   /* 全部區域均已通關                              */
+    SCENE_GAME_COMPLETE /* 全部區域均已通關                              */
 } bp_scene;
 
 /* 開機階段，依序執行。每一幀只跑一個階段，好讓載入條回報的是真實進度、視窗也維持可回應；
  * 詳見 bp_game.c。 */
 enum {
-    BOOT_LOG = 0, BOOT_INPUT, BOOT_ASSETS, BOOT_AUDIO, BOOT_GFX,
-    BOOT_FX, BOOT_WORLD, BOOT_WEAPONS, BOOT_ENEMIES, BOOT_PLAYER,
-    BOOT_WAVES, BOOT_SAVE, BOOT_UI, BOOT_HUD, BOOT_MENU, BOOT_LEVEL,
+    BOOT_LOG = 0,
+    BOOT_INPUT,
+    BOOT_ASSETS,
+    BOOT_AUDIO,
+    BOOT_GFX,
+    BOOT_FX,
+    BOOT_WORLD,
+    BOOT_WEAPONS,
+    BOOT_ENEMIES,
+    BOOT_PLAYER,
+    BOOT_WAVES,
+    BOOT_SAVE,
+    BOOT_UI,
+    BOOT_HUD,
+    BOOT_MENU,
+    BOOT_LEVEL,
     BOOT_COUNT
 };
 
 typedef struct {
     /* 單局記帳 */
-    int    level_index;
-    int    difficulty;
-    int    score_at_level_start;
-    int    kills_at_level_start;
-    float  level_start_time;
-    int    deaths_this_run;
+    int level_index;
+    int difficulty;
+    int score_at_level_start;
+    int kills_at_level_start;
+    float level_start_time;
+    int deaths_this_run;
 
     /* 本局表現指標，每個關卡重置 */
-    float  damage_taken;
-    int    headshots_this_level;
-    float  best_streak;
-    bool   secret_this_level;
-    bool   submitted;          /* 防護：一局只能提交（submit）一次 */
+    float damage_taken;
+    int headshots_this_level;
+    float best_streak;
+    bool secret_this_level;
+    bool submitted; /* 防護：一局只能提交（submit）一次 */
 
     /* 場景計時 */
     bp_scene scene;
     bp_scene scene_before_pause;
-    float  scene_time;
-    float  accumulator;        /* 固定步進剩下的零頭時間                */
-    int    sim_steps;
-    float  alpha;              /* 繪製插值係數 0..1                     */
+    float scene_time;
+    float accumulator; /* 固定步進剩下的零頭時間                */
+    int sim_steps;
+    float alpha; /* 繪製插值係數 0..1                     */
 
     /* 選單用的吸引模式（attract-mode）相機 */
-    float  orbit_yaw;
-    float  orbit_pitch;
-    float  orbit_radius;
+    float orbit_yaw;
+    float orbit_pitch;
+    float orbit_radius;
     Vector3 orbit_center;
 
     /* 開機 */
-    float  boot_progress;      /* 0..1，供載入條使用                     */
-    char   boot_status[64];
-    bool   boot_done;
-    bool   quit_requested;
-    float  total_time;
+    float boot_progress; /* 0..1，供載入條使用                     */
+    char boot_status[64];
+    bool boot_done;
+    bool quit_requested;
+    float total_time;
 
-    bool   initialised;
+    bool initialised;
 } bp_game;
 
 extern bp_game g_game;

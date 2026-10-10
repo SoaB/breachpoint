@@ -1040,7 +1040,7 @@ bp_game_frame(SELFTEST_DT);
 
 代價：自我測試**不能**偵測「遊戲跑太慢」。那由帧預算與結尾的 fps 檢查負責。
 
-### 17 項斷言
+### 18 項斷言
 
 ```
 PASS  boot completed (16 stages)
@@ -1050,6 +1050,7 @@ PASS  level loaded: 50 solids, 28 triggers
 PASS  static geometry baked into 12 batches
 FAIL  enemies spawned: 0 (0 alive at end)
 ...
+PASS  3D world resolved to the framebuffer (mean 43.2, 78% non-black)
 PASS  player stayed inside the level (y=0.05, floor=-1.00)
 PASS  player stayed inside the level bounds (0.0, 27.0)
 PASS  save system reachable (best score 0, kills 0)
@@ -1059,6 +1060,7 @@ FAIL  no error-level log lines raised by the run (5 new)
 幾個值得注意的：
 
 - **「玩家留在關卡內」**：碰撞 bug 在人類能回報任何症狀之前，會先表現為「穿過世界掉下去」。這是最便宜的高價值斷言。
+- **「3D 場景解析到畫面上」**：模擬側的斷言看不到渲染管線。後製著色器曾經把 raylib 的像素座標直接當 NDC 輸出，解析四邊形整個落到裁剪體外——模擬全過、畫面全黑。這條在最後一幀讀回framebuffer 像素統計（亮度／非黑比例），是唯一能抓到這類 bug 的斷言。
 - **「沒有 ERROR 級日誌」**：用 `bp_log_error_count()` 計數器，而不是抓 stdout。基線在**迴圈結束後**才取——因為斷言本身失敗時會用 `BP_LOGE` 印出，把自己的輸出算進去會讓最後這個檢查因自己的輸出而失敗。
 - **逐批計時**：每 120 帧印一行 `sim Xs / scene / wave / alive / particles / ms per frame`。這是「發現某個場景在軟體光柵化下要 300 ms」的方法，而不是盯著凍結的 console 五分鐘。
 

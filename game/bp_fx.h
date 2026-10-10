@@ -12,34 +12,34 @@
 #ifndef BP_FX_H
 #define BP_FX_H
 
-#include "bp_common.h"
-#include "../engine/bp_assets.h"   /* bp_texture_id */
+#include "../engine/bp_assets.h" /* bp_texture_id */
+#include "../engine/bp_common.h"
 
 typedef enum {
-    PTX_SPARK = 0,      /* 加法混合，依速度拉長                     */
-    PTX_SMOKE,          /* alpha 混合，逐漸膨脹並淡出               */
+    PTX_SPARK = 0, /* 加法混合，依速度拉長                     */
+    PTX_SMOKE, /* alpha 混合，逐漸膨脹並淡出               */
     PTX_BLOOD,
-    PTX_DEBRIS,         /* 受重力影響，會反彈                       */
-    PTX_SHELL,          /* 彈出的彈殼                               */
+    PTX_DEBRIS, /* 受重力影響，會反彈                       */
+    PTX_SHELL, /* 彈出的彈殼                               */
     PTX_EMBER,
-    PTX_FLASH,          /* 壽命極短，加法混合                       */
-    PTX_RING            /* 擴散的衝擊波廣告牌                       */
+    PTX_FLASH, /* 壽命極短，加法混合                       */
+    PTX_RING /* 擴散的衝擊波廣告牌                       */
 } bp_particle_kind;
 
 typedef struct {
     Vector3 pos;
     Vector3 vel;
-    float   age;
-    float   life;
-    float   size0;
-    float   size1;
-    float   roll;
-    float   spin;
-    Color   color0;
-    Color   color1;
+    float age;
+    float life;
+    float size0;
+    float size1;
+    float roll;
+    float spin;
+    Color color0;
+    Color color1;
     uint8_t kind;
-    uint8_t tex;           /* bp_texture_id */
-    uint8_t gravity;       /* 0 無, 1 全, 2 半                        */
+    uint8_t tex; /* bp_texture_id */
+    uint8_t gravity; /* 0 無, 1 全, 2 半                        */
     uint8_t additive;
     uint8_t bounce;
     uint8_t alive;
@@ -48,48 +48,48 @@ typedef struct {
 typedef struct {
     Vector3 pos;
     Vector3 normal;
-    float   size;
-    float   age;
-    float   life;
+    float size;
+    float age;
+    float life;
     uint8_t tex;
     uint8_t alive;
-    float   roll;
-    Color   tint;
+    float roll;
+    Color tint;
 } bp_decal;
 
 typedef struct {
     Vector3 from;
     Vector3 to;
-    float   age;
-    float   life;
-    float   width;
-    Color   color;
+    float age;
+    float life;
+    float width;
+    Color color;
     uint8_t alive;
 } bp_tracer;
 
 typedef struct {
     bp_particle particles[MAX_PARTICLES];
-    int         particle_head;      /* 以輪流方式指派的配置游標            */
-    int         particle_live;
+    int particle_head; /* 以輪流方式指派的配置游標            */
+    int particle_live;
 
-    bp_decal    decals[MAX_DECALS];
-    int         decal_head;
-    int         decal_live;         /* 供除錯疊層讀取的遙測計數            */
+    bp_decal decals[MAX_DECALS];
+    int decal_head;
+    int decal_live; /* 供除錯疊層讀取的遙測計數            */
 
-    bp_tracer   tracers[MAX_HITSCAN_TRACERS];
-    int         tracer_head;
+    bp_tracer tracers[MAX_HITSCAN_TRACERS];
+    int tracer_head;
 
     /* 遊戲性回饋（供 HUD 與相機讀取） */
-    float       hit_marker;         /* 0..1，確認命中時飆升                */
-    float       kill_marker;        /* 0..1，擊殺時飆升                    */
-    float       muzzle_flash;       /* 0..1，槍口火光強度                  */
-    Vector3     muzzle_pos;
-    Vector3     muzzle_dir;
-    float       shake_amount;
-    float       shake_time;
-    Vector3     shake_offset;
-    float       speedometer;        /* 平滑後的玩家速度，供後製效果使用    */
-    int         spawned_this_frame; /* 遙測 */
+    float hit_marker; /* 0..1，確認命中時飆升                */
+    float kill_marker; /* 0..1，擊殺時飆升                    */
+    float muzzle_flash; /* 0..1，槍口火光強度                  */
+    Vector3 muzzle_pos;
+    Vector3 muzzle_dir;
+    float shake_amount;
+    float shake_time;
+    Vector3 shake_offset;
+    float speedometer; /* 平滑後的玩家速度，供後製效果使用    */
+    int spawned_this_frame; /* 遙測 */
 } bp_fx;
 
 extern bp_fx g_fx;
@@ -100,7 +100,7 @@ void bp_fx_update(float dt, Vector3 worldFloorY);
 void bp_fx_draw(Camera3D cam);
 
 void bp_fx_particle(bp_particle_kind kind, Vector3 pos, Vector3 vel, float life,
-                    float size0, float size1, Color c0, Color c1);
+    float size0, float size1, Color c0, Color c1);
 
 /* 組合式發射器 —— 遊戲程式碼一律呼叫這些，絕不直接呼叫原始粒子。 */
 void bp_fx_muzzle_flash(Vector3 pos, Vector3 dir, float intensity);

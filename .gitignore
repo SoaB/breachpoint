@@ -1,5 +1,6 @@
 # 編譯產出
 objs/
+tools/
 *.exe
 *.o
 
