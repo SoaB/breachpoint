@@ -326,12 +326,12 @@ static void set_state(bp_enemy *e, bp_enemy_state s)
  * 已知位置」的記憶，因此失去視線的敵人會繼續搜尋，而不是立刻忘記 —— 這是「笨」與
  * 「在追獵」之間的差別。 */
 static void perceive(bp_enemy *e, const bp_enemy_def *d, Vector3 playerPos, Vector3 playerEye,
-                     bool playerAlive)
+                     bool playerAlive, float dt)
 {
     if (!playerAlive)
     {
         e->can_see = false;
-        e->memory_time = BP_MAX(0.0f, e->memory_time - GetFrameTime());
+        e->memory_time = BP_MAX(0.0f, e->memory_time - dt);
         return;
     }
 
@@ -368,14 +368,14 @@ static void perceive(bp_enemy *e, const bp_enemy_def *d, Vector3 playerPos, Vect
     }
     else
     {
-        e->memory_time = BP_MAX(0.0f, e->memory_time - GetFrameTime());
+        e->memory_time = BP_MAX(0.0f, e->memory_time - dt);
     }
     BP_UNUSED(playerEye);
 }
 
 /* 導向（steering）：追擊 + 分離 + 障礙物閃避 + 橫移。全部只在水平面上運作。 */
 static Vector3 steer(bp_enemy *e, const bp_enemy_def *d, Vector3 target, float desiredSpeed,
-                     bool pursue)
+                     bool pursue, float dt)
 {
     Vector3 flat = { target.x - e->pos.x, 0.0f, target.z - e->pos.z };
     float dist = Vector3Length(flat);
@@ -386,7 +386,7 @@ static Vector3 steer(bp_enemy *e, const bp_enemy_def *d, Vector3 target, float d
 
     /* ---- 橫移：會繞著你打轉，才讓競技場裡的敵人有威脅感，而不只是一隻走進你準心的
      *      血袋 ---- */
-    e->strafe_timer -= GetFrameTime();
+    e->strafe_timer -= dt;
     if (e->strafe_timer <= 0.0f)
     {
         e->strafe_timer = bp_rng_range(&g_engine.rng, 0.55f, 1.60f);
@@ -621,7 +621,7 @@ void bp_enemy_update(float dt, Vector3 playerPos, Vector3 playerEye, bool player
             {
                 if (e->state != ES_DYING && e->state != ES_DEAD) alive++;
 
-                perceive(e, d, playerPos, playerEye, playerAlive);
+                perceive(e, d, playerPos, playerEye, playerAlive, dt);
 
                 /* 硬直有一個最短停留時間，確保受擊反應永遠讀得清楚 */
                 if (e->state == ES_STAGGER)
@@ -682,7 +682,7 @@ void bp_enemy_update(float dt, Vector3 playerPos, Vector3 playerEye, bool player
 
                 if (d->is_static) desiredSpeed = 0.0f;
 
-                Vector3 want = steer(e, d, target, desiredSpeed, pursue);
+                Vector3 want = steer(e, d, target, desiredSpeed, pursue, dt);
                 move_enemy(e, d, want, dt);
 
                 /* 攻擊時（或看得見玩家時）面向玩家，前搖才讀得正確 */

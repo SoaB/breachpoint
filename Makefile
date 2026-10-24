@@ -19,7 +19,7 @@
 GAME           := breachpoint
 VERSION        := 0.9.0
 
-EMSDK_DIR      ?= $(HOME)/tools/emsdk
+EMSDK_DIR      ?= D:\Psoft\emsdk
 EMCC           := $(EMSDK_DIR)/upstream/emscripten/emcc
 EMAR           := $(EMSDK_DIR)/upstream/emscripten/emar
 
@@ -140,14 +140,14 @@ help:
 # raylib: native static lib
 # ------------------------------------------------------------------------------------------
 $(RAYLIB_DEPS):
-	@echo >> building raylib (native)
+	@echo building raylib (native)
 	$(MAKE) -C $(RAYLIB_DIR)/include PLATFORM=PLATFORM_DESKTOP RAYLIB_LIBTYPE=STATIC -j4
 
 raylib: $(RAYLIB_DEPS)
 
 # raylib for emscripten -- built once into build/libraylib_web.a
 $(BUILD)/libraylib_web.a:
-	@echo >> building raylib (web/wasm)
+	@echo building raylib (web/wasm)
 	$(call MKDIR,$(BUILD))
 	cd $(RAYLIB_DIR)/src && $(MAKE) PLATFORM=PLATFORM_WEB GRAPHICS=GRAPHICS_API_OPENGL_ES2 \
 	    EMSCRIPTEN_PATH=$(EMSDK_DIR)/upstream/emscripten RAYLIB_LIBTYPE=STATIC \
@@ -168,7 +168,7 @@ NATIVE_OBJS := $(patsubst %.c,$(NATIVE_OBJ)/%.o,$(ALL_SRC) $(MAIN_SRC))
 $(BUILD)/$(GAME)$(EXT): $(NATIVE_OBJS) $(RAYLIB_DEPS)
 	$(call MKDIR,$(BUILD))
 	$(CC) $(NATIVE_OBJS) -o $@ $(NATIVE_LDFLAGS) $(NATIVE_LIBS)
-	@echo >> built $@
+	@echo built $@
 
 release: NATIVE_CFLAGS := $(subst -O2 -g,-O3 -DNDEBUG,$(NATIVE_CFLAGS))
 release: $(BUILD)/$(GAME)-release$(EXT)
@@ -176,7 +176,7 @@ release: $(BUILD)/$(GAME)-release$(EXT)
 $(BUILD)/$(GAME)-release$(EXT): $(NATIVE_OBJS) $(RAYLIB_DEPS)
 	$(call MKDIR,$(BUILD))
 	$(CC) $(NATIVE_OBJS) -o $@ $(NATIVE_LDFLAGS) $(NATIVE_LIBS)
-	@echo >> built $@
+	@echo built $@
 
 run: $(BUILD)/$(GAME)$(EXT)
 	.$(BUILD)/$(GAME)$(EXT)
@@ -198,10 +198,10 @@ $(WEB_OUT)/index.html: $(WEB_OBJS) $(BUILD)/libraylib_web.a
 	-$(call CP,web/shell.html,$(WEB_OUT)/shell.html)
 	-$(call CP,$(WEB_OUT)/$(GAME).html,$(WEB_OUT)/index.html)
 	-$(call CP,$(WEB_OUT)/$(GAME).js,$(WEB_OUT)/game.js)
-	@echo >> web build complete
+	@echo web build complete
 
 serve: web
-	@echo >> serving $(WEB_OUT) on http://0.0.0.0:8080
+	@echo serving $(WEB_OUT) on http://0.0.0.0:8080
 	cd $(WEB_OUT) && python3 -m http.server 8080 --bind 0.0.0.0
 
 # ------------------------------------------------------------------------------------------
@@ -211,7 +211,7 @@ cfg: engine/bp_config_data.h
 
 engine/bp_config_data.h: $(wildcard assets/cfg/*.cfg) tools/gen_cfg.py
 	python3 tools/gen_cfg.py assets/cfg engine/bp_config_data.h
-	@echo >> regenerated engine/bp_config_data.h
+	@echo regenerated engine/bp_config_data.h
 
 # ------------------------------------------------------------------------------------------
 # headless self-test
@@ -220,9 +220,9 @@ TEST_SRC := tests/test_systems.c engine/bp_log.c engine/bp_math.c engine/bp_enti
 test:
 	$(call MKDIR,$(BUILD))
 	$(CC) -std=c11 -O1 -g -Wall -Wextra -Wno-unused-parameter -Iengine -Igame -I. \
-	    -I$(RAYLIB_DIR)/src -DBP_HEADLESS_TEST -o $(BUILD)/test_systems$(EXT) $(TEST_SRC) -lm
-	.$(BUILD)/test_systems$(EXT)
+	    -I$(RAYLIB_DIR)/include -DBP_HEADLESS_TEST -o $(BUILD)/test_systems$(EXT) $(TEST_SRC) -lm
+	$(BUILD)/test_systems$(EXT)
 
 clean:
 	$(call RMDIR,$(BUILD))
-	@echo >> cleaned
+	@echo cleaned

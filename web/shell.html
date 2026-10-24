@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+    <title>Breach Point</title>
+    <style>
+        html, body {
+            margin: 0; padding: 0; width: 100%; height: 100%;
+            background: #000; overflow: hidden;
+        }
+        /* 畫布永遠填滿視窗：尺寸由 main.c 的 IsWindowResized() 路徑反應，不做 CSS 拉伸變形。 */
+        canvas.emscripten {
+            display: block; width: 100%; height: 100%;
+            outline: none; touch-action: none; border: 0;
+        }
+        #status {
+            position: absolute; left: 50%; top: 50%;
+            transform: translate(-50%, -50%);
+            color: #9aa4b2; font-family: monospace; font-size: 14px;
+            text-align: center; pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas class="emscripten" id="canvas" oncontextmenu="event.preventDefault()" tabindex="-1"></canvas>
+    <div id="status">click the canvas once to capture keyboard & mouse</div>
+    <script type="text/javascript">
+        // main.c 的註解說明：Web 版的畫布要被點一下才會取得鍵盤／滑鼠焦點。提示文字在
+        // 第一次 mousedown 後就功成身退。
+        document.getElementById("canvas").addEventListener("mousedown", function () {
+            var s = document.getElementById("status");
+            if (s) s.style.display = "none";
+        });
+        var Module = {
+            canvas: document.getElementById("canvas")
+        };
+    </script>
+    {{{ SCRIPT }}}
+</body>
+</html>

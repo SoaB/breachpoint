@@ -50,8 +50,11 @@ static char *fetch_line(bp_config *cfg, int idx, char *out, int outSize)
     memcpy(out, cfg->buffer + cfg->line_start[idx], (size_t)len);
     out[len] = '\0';
 
-    char *hash = strchr(out, '#');
-    if (hash) *hash = '\0';
+    /* '#' 只有在行首（前面只有空白）才開啟註解。行中的 '#' 是資料 —— 設定檔的顏色一律
+     * 寫成 `color = #RRGGBB`，先前的實作把行內的 '#' 也砍掉，等於讓所有顏色鍵靜默失效。 */
+    char *s0 = out;
+    while (*s0 && isspace((unsigned char)*s0)) s0++;
+    if (*s0 == '#') *s0 = '\0';
 
     char *s = out;
     while (*s && isspace((unsigned char)*s)) s++;

@@ -757,15 +757,27 @@ int bp_menu_update(float dt)
     g_menu.list.hovered = -1;
 
     /*
-     * 只有在游標確實位於視窗內時，才允許它移動選取。
+     * 只有在游標確實位於視窗內、而且「真的移動過」時，才允許它移動選取。
      *
      * bp_ui_mouse_virtual() 會把螢幕座標映射進 640x360 畫布並做夾限，因此一個位於視窗
      * 之外的游標 —— 可能是還沒被移動過而停在原點，或停在另一台螢幕上 —— 會落在一個看似
      * 合理的畫布座標。若少了這道防護，每個選單的第一個畫面就會懸停選中恰好位於該夾限點
      * 的那一列，並悄悄改掉 ACCEPT 的目標：玩家在「NEW RUN」上按下 Enter，卻進到了
-     * OPTIONS。這在桌機上看不出來，因為等到有人按下按鍵時，游標早已在視窗內；但在無頭
-     * （headless）或 kiosk 顯示器中，游標永遠不會移動，這個問題就會一直存在。
+     * OPTIONS。
+     *
+     * 「位於視窗內」這道防護還不夠：視窗開在游標旁邊時，一個從未動過的游標照樣落在視窗
+     * 內 —— 通常是清單正中央。於是鍵盤玩家按下的第一個 Enter 啟動的不是預設列，而是那個
+     * 恰好被靜止游標壓住的列；若那一列是 QUIT，選單就停在確認對話框裡看起來像當機。因此
+     * hover 只有在游標位置相對上一張畫面真的有變化時才會接管選取；點擊不受此限 —— 點擊
+     * 本身就是明確的意圖，作用中的是「游標下」那一列，與 hover 無關。
      */
+    static Vector2 s_prev_mouse = { -1.0f, -1.0f };
+    static bool  s_mouse_valid  = false;
+    bool mouseMoved = s_mouse_valid &&
+        (fabsf(msp.x - s_prev_mouse.x) > 0.5f || fabsf(msp.y - s_prev_mouse.y) > 0.5f);
+    s_prev_mouse = msp;
+    s_mouse_valid = true;
+
     bool mouseInside = msp.x >= 0.0f && msp.y >= 0.0f && msp.x < (float)GetScreenWidth() && msp.y < (float)GetScreenHeight();
 
     for (int i = 0; mouseInside && i < g_menu.list.count; i++) {
@@ -778,9 +790,12 @@ int bp_menu_update(float dt)
         if (!row_selectable(&g_menu.list.rows[i]))
             continue;
 
-        g_menu.list.hovered = i;
-        g_menu.list.selected = i;
-        g_menu.list.mouse_used = true;
+        if (mouseMoved)
+        {
+            g_menu.list.hovered = i;
+            g_menu.list.selected = i;
+            g_menu.list.mouse_used = true;
+        }
 
         if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
             bp_menu_row* r = &g_menu.list.rows[i];

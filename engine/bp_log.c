@@ -39,9 +39,13 @@ int  bp_log_warn_count(void)  { return s_warn_count;  }
  */
 void bp_apply_event_wait(void)
 {
+#ifndef BP_HEADLESS_TEST
     DisableEventWaiting();
     if (g_engine.vsync) SetTargetFPS(0);
     else                SetTargetFPS(240);
+#endif
+    /* headless 單元測試（make test）不連結 raylib：這裡的全部呼叫端都在有視窗的行程裡，
+     * 測試行程不需要（也不允許）碰視窗事件排程。 */
 }
 
 void bp_log_init(void)

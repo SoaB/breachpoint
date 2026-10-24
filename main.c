@@ -202,6 +202,12 @@ static void selftest_frame(void)
             g_player.health = 100.0f;
     }
 
+    /* 把游標釘在視窗中心。PLAYING 期間游標被捕捉（pointer lock），`GetMouseDelta()` 量測
+     * 的是實體滑鼠的移動 —— 桌面上任何真實的滑鼠動作都會灌進視角，讓「確定性」的合成跑程
+     * 隨測試機上有人在動滑鼠而漂移（症狀：瞄準偶爾失準、玩家偶然死亡、清波時間抖動）。
+     * 每幀開始前把游標寫回中心，前後兩次讀數相等，delta 恆為 0。 */
+    SetMousePosition(GetScreenWidth() / 2, GetScreenHeight() / 2);
+
     BeginDrawing();
     ClearBackground(BLACK);
     bp_game_frame(SELFTEST_DT);
@@ -416,7 +422,10 @@ static void web_main_loop(void) { run_frame(); }
 int main(int argc, char **argv)
 {
     bool selftest = false;
-    int selftestFrameCount = 1800;     /* 以下方固定的 60 Hz 計，約 30 秒的模擬遊玩 */
+    /* 45 秒的模擬遊玩。敵人 AI 的計時器改吃模擬 dt（而非牆上時鐘）之後，清波速率回到
+     * 標稱值；實測 30 秒的跑程清完 wave 1 只剩個位數幀的餘裕，45 秒給波次導演留出
+     * 穩定的推進空間。 */
+    int selftestFrameCount = 2700;
     for (int i = 1; i < argc; i++)
     {
         if (!strcmp(argv[i], "--selftest")) selftest = true;
